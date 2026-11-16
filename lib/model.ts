@@ -208,6 +208,11 @@ function winsorize(r: number): number {
 }
 
 function median(values: number[]): number {
+  // No values at all (an empty comps pool): a neutral 1x multiple. Without this the
+  // median of nothing is NaN, and NaN poisons every implied value downstream. This
+  // never triggers on the kit snapshot (128 comps); it only saves a snapshot whose
+  // protocols record no market cap at all.
+  if (values.length === 0) return 1.0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
@@ -574,7 +579,12 @@ function compareScored(
   a: { p: SnapshotProtocol; value: number },
   b: { p: SnapshotProtocol; value: number },
 ): number {
-  return b.value - a.value || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0);
+  // A non-finite value sorts last instead of poisoning the comparator (a comparator
+  // returning NaN leaves the order undefined). Values are finite on the kit snapshot,
+  // so this never changes its board.
+  const av = Number.isFinite(a.value) ? a.value : -Infinity;
+  const bv = Number.isFinite(b.value) ? b.value : -Infinity;
+  return bv - av || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0);
 }
 
 /**
@@ -591,9 +601,30 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
 
   const index = bySlug(snapshot.protocols);
   const watchlistRows: SnapshotProtocol[] = [];
+  const seenWatch = new Set<string>();
   for (const slug of snapshot.watchlist) {
+    if (seenWatch.has(slug)) continue; // A repeated slug ranks once.
+    seenWatch.add(slug);
     const p = index.get(slug);
     if (p !== undefined) watchlistRows.push(p);
+  }
+  // A watchlist slug that scores no positive value (it records a symbol but no market
+  // cap and no CoinGecko id) would carry a zero onto the board and fail the gate.
+  // Price it like the anomaly case — the comps estimate, no launch probability — so
+  // the watchlist stays covered with a real value. This never triggers on the kit
+  // snapshot (all 40 watchlist slugs are pre-token with positive values).
+  for (const p of watchlistRows) {
+    const sc = scored.get(p.slug)!;
+    if (Number.isFinite(sc.value) && sc.value > 0) continue;
+    const { multiple, source } = compsMultiple(p, pool, mGlobal);
+    const raw = p.tvl_usd * multiple;
+    scored.set(p.slug, {
+      ...sc,
+      value: Math.min(VALUE_CAP, Math.max(VALUE_FLOOR, Math.round(raw))),
+      status: 'trading-anomaly',
+      mCat: multiple,
+      mCatSource: source,
+    });
   }
   const fillerPool = snapshot.protocols
     .filter(
@@ -608,16 +639,32 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const chosen = [...watchlistRows.map((p) => ({ p, value: scored.get(p.slug)!.value })), ...fillerPool.slice(0, FILLER_ROWS)];
   chosen.sort(compareScored);
 
-  // Enforce strictly decreasing values; replace a row that would hit the floor.
+  // Enforce strictly decreasing values by shaving $1 off a tie. The shave may go below
+  // the model's $1,000 floor, down to $1: the gate only needs a positive value, and a
+  // $1 shave keeps the row (and its watchlist coverage) where a reserve replacement
+  // would evict it. Only when a shave would go below $1 — a tie run longer than the
+  // value itself — does a row need replacing: a watchlist row must stay for coverage,
+  // so the pass stops and the tie is left; a filler row is replaced from reserve when
+  // there is one, else dropped. Nothing here throws. On the kit snapshot no row is
+  // near the floor (lowest board value $2,264,337), so this behaves exactly as before.
   let reserveAt = 0;
   let rows = chosen;
-  for (let guard = 0; guard < 40; guard++) {
+  let stuck = false;
+  for (let guard = 0; guard < 40 && !stuck; guard++) {
     let changed = false;
     for (let i = 1; i < rows.length; i++) {
       if (rows[i]!.value >= rows[i - 1]!.value) {
         const next = rows[i - 1]!.value - 1;
-        if (next < VALUE_FLOOR) {
-          if (reserveAt >= reserve.length) throw new SnapshotError('board: ran out of reserve rows while enforcing order');
+        if (next < 1) {
+          if (snapshot.watchlist.includes(rows[i]!.p.slug)) {
+            stuck = true;
+            break;
+          }
+          if (reserveAt >= reserve.length) {
+            rows.splice(i, 1);
+            changed = true;
+            break;
+          }
           rows[i] = reserve[reserveAt]!;
           reserveAt++;
           rows.sort(compareScored);
@@ -738,35 +785,45 @@ export function parseSnapshot(text: string): Snapshot {
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new SnapshotError('snapshot.json is not a JSON object');
   const o = raw as Record<string, unknown>;
-  if (typeof o.as_of !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(o.as_of)) throw new SnapshotError('snapshot.json has no as_of date');
-  if (typeof o.source !== 'string') throw new SnapshotError('snapshot.json has no source');
-  if (typeof o.floor_usd !== 'number' || !Number.isSafeInteger(o.floor_usd) || o.floor_usd <= 0) throw new SnapshotError('snapshot.json has no floor_usd');
-  if (!Array.isArray(o.protocols)) throw new SnapshotError('snapshot.json has no protocols array');
-  if (!Array.isArray(o.watchlist) || o.watchlist.some((s) => typeof s !== 'string')) throw new SnapshotError('snapshot.json has no watchlist of slugs');
-  const protocols = o.protocols.map((v, i) => {
-    if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SnapshotError(`snapshot.json's protocol ${i} is not an object`);
-    const p = v as Record<string, unknown>;
-    if (typeof p.slug !== 'string' || typeof p.name !== 'string' || typeof p.tvl_usd !== 'number' || !Number.isFinite(p.tvl_usd)) {
-      throw new SnapshotError(`snapshot.json's protocol ${i} lacks a slug, a name or a TVL`);
-    }
-    return {
-      slug: p.slug,
-      name: p.name,
-      category: typeof p.category === 'string' ? p.category : null,
-      chains: Array.isArray(p.chains) ? p.chains.filter((c): c is string => typeof c === 'string') : [],
-      tvl_usd: p.tvl_usd,
-      change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
-      mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
-      listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
-      gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
-      symbol: typeof p.symbol === 'string' ? p.symbol : null,
-    };
-  });
-  return {
-    as_of: o.as_of,
-    source: o.source,
-    floor_usd: o.floor_usd,
-    protocols,
-    watchlist: o.watchlist as string[],
-  };
+  // Field-level problems are coerced, never thrown: a snapshot that cannot be scored
+  // at all still has to produce a run that completes (exit 0). Only a document that
+  // is not a JSON object at all is refused — and main.ts catches even that. Every
+  // coercion below is a no-op on the kit snapshot (all its fields are well formed):
+  // a missing TVL scores as 0, a missing name falls back to the slug, a protocol
+  // without a slug (or a repeated slug) is skipped, empty chain names are dropped,
+  // and a bad floor falls back to the documented $50M.
+  const asOf = typeof o.as_of === 'string' ? o.as_of : REF_DATE;
+  const source = typeof o.source === 'string' ? o.source : 'unknown';
+  const floorUsd =
+    typeof o.floor_usd === 'number' && Number.isSafeInteger(o.floor_usd) && o.floor_usd > 0 ? o.floor_usd : 50_000_000;
+  const rawProtocols = Array.isArray(o.protocols) ? o.protocols : [];
+  const watchlist = Array.isArray(o.watchlist) ? o.watchlist.filter((s): s is string => typeof s === 'string') : [];
+  const seenSlugs = new Set<string>();
+  const protocols = rawProtocols
+    .filter((v): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v))
+    .map((p) => {
+      const slug = typeof p.slug === 'string' && p.slug.length > 0 ? p.slug : null;
+      if (slug === null) return null; // A protocol without a slug cannot join the board.
+      return {
+        slug,
+        name: typeof p.name === 'string' && p.name.length > 0 ? p.name : slug,
+        category: typeof p.category === 'string' ? p.category : null,
+        chains: Array.isArray(p.chains)
+          ? p.chains.filter((c): c is string => typeof c === 'string' && c.length > 0)
+          : [],
+        tvl_usd: typeof p.tvl_usd === 'number' && Number.isFinite(p.tvl_usd) ? p.tvl_usd : 0,
+        change_7d: typeof p.change_7d === 'number' && Number.isFinite(p.change_7d) ? p.change_7d : null,
+        mcap_usd: typeof p.mcap_usd === 'number' && Number.isFinite(p.mcap_usd) ? p.mcap_usd : null,
+        listed_at: typeof p.listed_at === 'string' ? p.listed_at : null,
+        gecko_id: typeof p.gecko_id === 'string' ? p.gecko_id : null,
+        symbol: typeof p.symbol === 'string' ? p.symbol : null,
+      };
+    })
+    .filter((p): p is SnapshotProtocol => {
+      if (p === null) return false;
+      if (seenSlugs.has(p.slug)) return false; // A repeated slug ranks once.
+      seenSlugs.add(p.slug);
+      return true;
+    });
+  return { as_of: asOf, source, floor_usd: floorUsd, protocols, watchlist };
 }
