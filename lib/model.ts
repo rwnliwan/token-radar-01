@@ -175,6 +175,8 @@ export interface RadarData {
   curve_a: number;
   curve_b: number;
   loo: LooResults;
+  /** Walk-forward splits: [test-set size, curve median miss, global-median miss]. */
+  walkforward: [number, number, number][];
   watchlist_size: number;
   board_size: number;
   rows: RadarRow[];
@@ -366,6 +368,40 @@ export function computeLOO(pool: SnapshotProtocol[]): LooResults {
     curve: missStats(vPreds, obss),
     slope: Math.round(fitAll.b * 100) / 100,
   };
+}
+
+/**
+ * Walk-forward validation, computed at runtime from the sealed snapshot: the curve
+ * and the flat global median are fit on tokens listed before a cutoff and tested on
+ * tokens listed after it, at three cutoffs (older 50%, 60%, 70%). Like LOO this is
+ * internal consistency on tokens that already trade, not validation against launches.
+ * Reported as-is, including when a method looks weak. Each split is a positional
+ * triple [test-set size, curve median miss, global-median miss].
+ */
+export function computeWalkForward(pool: SnapshotProtocol[]): [number, number, number][] {
+  const dated = pool
+    .filter((p) => p.listed_at !== null)
+    .sort((a, b) =>
+      a.listed_at! < b.listed_at! ? -1 : a.listed_at! > b.listed_at! ? 1 : a.slug < b.slug ? -1 : 1,
+    );
+  const out: [number, number, number][] = [];
+  for (const frac of [0.5, 0.6, 0.7]) {
+    const k = Math.floor(dated.length * frac);
+    const fitSet = dated.slice(0, k);
+    const testSet = dated.slice(k);
+    if (fitSet.length < 5 || testSet.length < 5) continue;
+    const fit = fitCurve(fitSet);
+    const mG = median(fitSet.map((p) => winsorize(p.mcap_usd! / p.tvl_usd)));
+    const cPreds = testSet.map((q) => Math.exp(fit.a + fit.b * Math.log(q.tvl_usd)));
+    const gPreds = testSet.map((q) => q.tvl_usd * mG);
+    const obss = testSet.map((q) => q.mcap_usd!);
+    out.push([
+      testSet.length,
+      missStats(cPreds, obss).median_miss,
+      missStats(gPreds, obss).median_miss,
+    ]);
+  }
+  return out;
 }
 
 /** The growth multiplier: momentum over seven days, capped so one week cannot dominate. */
@@ -632,9 +668,21 @@ export function stepText(step: FarmStep): string {
  * value — minus the plan's total gas and fees. The 10% is an assumption, stated in the
  * step itself, not a fact — and the capital is not a cost, it comes back on exit. At the
  * capital the plan uses ($50-$250) the pro-rata reward is usually smaller than the fees,
- * so the net is negative unless the airdrop is large.
+ * so the net is negative unless the airdrop is large. For a row whose value is a model
+ * estimate (pre-token or anomaly), the net step also shows the net at $1,000 and $10,000
+ * deposits, the smallest deposit that pays, the net at the low end of the value band
+ * (implied value divided by the curve's median miss from leave-one-out), and a verdict:
+ * Robust when the low-end net at $10,000 is positive, Thin when only the implied-value
+ * net at $10,000 is, Skip otherwise. A trading anchor's value is observed, not modelled,
+ * so its net step keeps the plain pro-rata net with no band or verdict.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null, impliedValue: number): FarmStep[] {
+export function farmSteps(
+  p: SnapshotProtocol,
+  age: number | null,
+  impliedValue: number,
+  medianMiss: number,
+  status: 'pre-token' | 'trading' | 'trading-anomaly',
+): FarmStep[] {
   const chain = chainOf(p);
   const name = p.name;
   const capital = capitalFor(p);
@@ -646,8 +694,31 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, impliedValue:
   const totalCost = gas + 2 * weeks + 11 + bridgeCost + 3;
   const reward = impliedValue * (capital / p.tvl_usd) * 0.10;
   const net = reward - totalCost;
+  // Deposit sensitivity from the same cost math: the gas tier is the only part of the
+  // cost that moves with the deposit, so the net at any capital is the pro-rata reward
+  // at that capital minus the tier's cost. The break-even deposit is solved per tier.
+  const miss = medianMiss > 0 ? medianMiss : 1;
+  const netAt = (cap: number): number => {
+    const g2 = cap >= 250 ? 8 : cap >= 100 ? 5 : 3;
+    return impliedValue * (cap / p.tvl_usd) * 0.10 - (g2 + 2 * weeks + 11 + bridgeCost + 3);
+  };
+  const breakEven = (() => {
+    if (impliedValue <= 0) return 0;
+    const u = p.tvl_usd / (impliedValue * 0.10);
+    const t0 = 2 * weeks + bridgeCost + 17;
+    let x = t0 * u;
+    if (x >= 100) x = (t0 + 2) * u;
+    if (x >= 250) x = (t0 + 5) * u;
+    return Math.round(x);
+  })();
+  const low10k = (impliedValue / miss) * (10000 / p.tvl_usd) * 0.10 - (8 + 2 * weeks + 11 + bridgeCost + 3);
+  const verdict = low10k > 0 ? 'Robust' : netAt(10000) > 0 ? 'Thin' : 'Skip';
   const money = (n: number): string =>
     n >= 1000 ? `$${Math.round(n).toLocaleString('en-US')}` : `$${Math.round(n * 100) / 100}`;
+  const netText =
+    status === 'trading'
+      ? `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}.${net < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${capital} capital returns on exit.`
+      : `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}.${net < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} At $1,000 the net is ${netAt(1000) < 0 ? '−' : ''}${money(Math.abs(netAt(1000)))}; at $10,000 it is ${netAt(10000) < 0 ? '−' : ''}${money(Math.abs(netAt(10000)))}.${breakEven <= capital ? ' The plan already pays at this size.' : ` The plan pays from ${money(breakEven)}.`} At the low end (implied / ${miss.toFixed(2)}, the median miss) the $10,000 net is ${low10k < 0 ? '−' : ''}${money(Math.abs(low10k))}. Verdict: ${verdict}. The 10% is assumed, not a fact; the $${capital} capital returns on exit.`;
   const steps: FarmStep[] = [
     {
       text: `Use a fresh wallet on ${chain} that holds only the funds you plan to farm in ${name}, and keep its seed phrase offline.`,
@@ -694,7 +765,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, impliedValue:
       time: '10 minutes',
     },
     {
-      text: `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}.${net < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${capital} capital returns on exit.`,
+      text: netText,
       cost: 'the gas and fees above',
       time: 'at launch',
     },
@@ -738,6 +809,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const mGlobal = median(pool.map((p) => winsorize(p.mcap_usd! / p.tvl_usd)));
   const fit = fitCurve(pool);
   const loo = computeLOO(pool);
+  const walkforward = computeWalkForward(pool);
   const scored = new Map<string, ScoredValue>();
   for (const p of snapshot.protocols) scored.set(p.slug, scoreProtocol(p, pool, mGlobal, snapshot.floor_usd, snapshot.as_of, fit));
 
@@ -845,7 +917,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
         chain_multiplier: round4(sc.chainMultiplier),
         launch_probability: sc.launchProbability,
       },
-      farm_steps: farmSteps(s.p, sc.age, s.value).map(stepText),
+      farm_steps: farmSteps(s.p, sc.age, s.value, loo.curve.median_miss, sc.status).map(stepText),
     };
   });
 
@@ -869,6 +941,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     curve_a: round4(fit.a),
     curve_b: round4(fit.b),
     loo,
+    walkforward,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     rows: board.map((r) => [

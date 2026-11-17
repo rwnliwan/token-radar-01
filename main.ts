@@ -57,6 +57,7 @@ function buildRadarSafe(snapshot: Snapshot): { board: BoardRow[]; radar: RadarDa
           curve: { n: 0, median_miss: 0, within_2x: 0, within_3x: 0 },
           slope: 0,
         },
+        walkforward: [],
         watchlist_size: snapshot.watchlist.length,
         board_size: 0,
         rows: [],

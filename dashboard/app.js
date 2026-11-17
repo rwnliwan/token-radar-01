@@ -79,8 +79,6 @@ function filtered() {
 
 function render() {
   const list = filtered();
-  // Ranks 1–3 are trading anchors, so the default pre-token view starts at rank 4.
-  // Say so only where it applies (pre-token / watchlist), not on the all / trading views.
   const rankNote = $('rankNote');
   if (rankNote) rankNote.hidden = !(statusFilter === 'pre-token' || statusFilter === 'watchlist');
   rowsEl.innerHTML = list.map((r) => {
@@ -112,8 +110,6 @@ function factorCard(label, value, note, num, fill) {
   let bar = '';
   if (typeof num === 'number' && Number.isFinite(num) && num > 0) {
     if (fill) {
-      // Probability fill (0–1): fills left to right toward 100%, never amber-left.
-      // P_launch is a stated prior, so a fill reads as "how likely", not "how negative".
       const w = Math.max(1.5, Math.min(100, num * 100));
       bar = `<div class="fbar" role="img" aria-label="${label} ${num}"><div class="ftrack"><div class="ffill" style="left:0;width:${w.toFixed(1)}%;background:var(--accent)"></div></div></div>`;
     } else {
@@ -128,7 +124,6 @@ function factorCard(label, value, note, num, fill) {
 }
 
 // Farm plan computed in-page from the embedded row (no fetch); same actions/costs/times as the model, worded tighter for the text cap.
-// --- compact port v3 (golfed) ---
 const F = 'dex:dex,swap:dex,lend:lending,yield aggregator:yield,yield:yield,curator:curator,allocator:curator,rwa:rwa,basis:basis,cdp:cdp,collateral:cdp,derivative:derivatives,perpetual:derivatives,options:derivatives,chain:chain,staking pool:staking,staking:staking,locker:locker,lock:locker,prediction:prediction,stable:stable,insurance:insurance,bridge:bridge'.split(',').map((p) => p.split(':'));
 const fam = (c) => { const f = F.find(([s]) => (c || '').toLowerCase().includes(s)); return f ? f[1] : 'generic'; };
 const M = {
@@ -152,14 +147,22 @@ const M = {
 const G = 'Use one more feature of $n on $h with $h2 so the wallet\'s use is fuller.';
 const sub = (t, n, c, h) => t.replaceAll('$h2', '$' + Math.round(c / 2)).replaceAll('$c', '$' + c).replaceAll('$n', n).replaceAll('$h', h);
 const st = (s) => { let x = `${s.t} Cost: ${s.c}. Time: ${s.m}.`; if (x.length > 600) x = `${x.slice(0, 596)}...`; if (x.length < 20) x = `${x} Hold the position and check the protocol's own page.`; return x; };
-function farmPort(n, cat, ch, tvl, age, val) {
+function farmPort(n, cat, ch, tvl, age, val, status, miss) {
   const h = ch ? ch.split(',')[0] : 'its main chain';
   const c = tvl >= 5e8 ? 250 : tvl >= 1e8 ? 100 : 50;
   const hold = age == null ? 30 : age < 180 ? 60 : age < 365 ? 45 : 30;
   const f = fam(cat), g = c >= 250 ? 8 : c >= 100 ? 5 : 3;
-  const wk = Math.max(1, Math.round(hold / 7)), tc = g + 2 * wk + 11 + (h === 'Ethereum' ? 0 : 5) + 3;
+  const br = h === 'Ethereum' ? 0 : 5;
+  const wk = Math.max(1, Math.round(hold / 7)), tc = g + 2 * wk + 11 + br + 3;
   const rw = (val || 0) * c / tvl * 0.10, nt = rw - tc;
   const money = (x) => x >= 1000 ? '$' + Math.round(x).toLocaleString('en-US') : '$' + (Math.round(x * 100) / 100);
+  const mm = miss > 0 ? miss : 1;
+  const nA = (cap) => (val || 0) * cap / tvl * 0.10 - ((cap >= 250 ? 8 : cap >= 100 ? 5 : 3) + 2 * wk + 11 + br + 3);
+  let be = 0; if (val > 0) { const u = tvl / (val * 0.10), t0 = 2 * wk + br + 17; be = t0 * u; if (be >= 100) be = (t0 + 2) * u; if (be >= 250) be = (t0 + 5) * u; be = Math.round(be); }
+  const nl = (val || 0) / mm * (10000 / tvl) * 0.10 - (8 + 2 * wk + 11 + br + 3);
+  const netT = status === 'trading'
+    ? `Net: the $${c} share of ${money(tvl)} TVL, at a stated 10% farmer allocation of the ${money(val || 0)} implied value, is ${money(rw)}; minus about $${tc} gas and fees, the net is ${nt < 0 ? '−' : ''}${money(Math.abs(nt))}.${nt < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${c} capital returns on exit.`
+    : `Net: the $${c} share of ${money(tvl)} TVL, at a stated 10% farmer allocation of the ${money(val || 0)} implied value, is ${money(rw)}; minus about $${tc} gas and fees, the net is ${nt < 0 ? '−' : ''}${money(Math.abs(nt))}.${nt < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} At $1,000 the net is ${nA(1000) < 0 ? '−' : ''}${money(Math.abs(nA(1000)))}; at $10,000 it is ${nA(10000) < 0 ? '−' : ''}${money(Math.abs(nA(10000)))}.${be <= c ? ' The plan already pays at this size.' : ` The plan pays from ${money(be)}.`} At the low end (implied / ${mm.toFixed(2)}, the median miss) the $10,000 net is ${nl < 0 ? '−' : ''}${money(Math.abs(nl))}. Verdict: ${nl > 0 ? 'Robust' : nA(10000) > 0 ? 'Thin' : 'Skip'}. The 10% is assumed, not a fact; the $${c} capital returns on exit.`;
   const s = [
     { t: `Use a fresh wallet on ${h} holding only the funds to farm in ${n}; keep its seed phrase offline.`, c: 'under $3 gas for the first transaction', m: '5 minutes' },
     { t: sub(M[f], n, c, h), c: `$${c} capital and about $${g} gas`, m: '15 minutes to set up' },
@@ -174,7 +177,7 @@ function farmPort(n, cat, ch, tvl, age, val) {
   if (tvl >= 5e8) s.push({ t: sub(G, n, c, h), c: `about $${Math.max(2, Math.round(g / 2))} gas`, m: '10 minutes' });
   s.push(
     { t: `Before withdrawing, open ${n}'s own points page and claim only from the link it publishes.`, c: 'no fee to check, never pay to claim', m: '10 minutes' },
-    { t: `Net: the $${c} share of ${money(tvl)} TVL, at a stated 10% farmer allocation of the ${money(val || 0)} implied value, is ${money(rw)}; minus about $${tc} gas and fees, the net is ${nt < 0 ? '−' : ''}${money(Math.abs(nt))}.${nt < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${c} capital returns on exit.`, c: 'the gas and fees above', m: 'at launch' },
+    { t: netT, c: 'the gas and fees above', m: 'at launch' },
     { t: `Exit in stages: unwind in ${n}, swap back to USDC, bridge home from ${h} at the points target or two weeks before launch. Log every transaction.`, c: '$8 to $15 to exit', m: '30 minutes' },
   );
   return s.map(st);
@@ -192,17 +195,17 @@ function showDetail(slug) {
     <p class="meta">Rank ${r.rank} · ${esc(r.category || 'no category')} · ${chainChips(r)} · TVL ${fmtUSD(r.tvl_usd)} · 7d ${fmtPct(r.change_7d)} · age ${fmtAge(r.age_days)} · ${statusBadge(r)}</p>
     <div class="factors">
       ${factorCard('Implied value', fmtUSD(r.implied_value_usd), r.status === 'pre-token' ? 'model estimate' : r.status === 'trading-anomaly' ? 'TVL × M_cat fallback' : 'observed market cap')}
-      ${r.status === 'trading' ? '' : factorCard('M_cat', mcat, 'fitted curve multiple', r.m_cat)}
+      ${r.status === 'trading' ? '' : factorCard('M_cat', mcat, 'curve multiple', r.m_cat)}
       ${r.status === 'trading' ? '' : factorCard('F_growth', r.growth_multiplier.toFixed(3), '7-day momentum', r.growth_multiplier)}
       ${r.status === 'trading' ? '' : factorCard('F_age', r.age_multiplier.toFixed(3), 'age hump', r.age_multiplier)}
       ${r.status === 'trading' ? '' : factorCard('F_chain', r.chain_multiplier.toFixed(2), 'chain count', r.chain_multiplier)}
-      ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'stated prior', r.launch_probability, true)}
+      ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'prior', r.launch_probability, true)}
     </div>
     ${arith ? `<p class="fine">${arith}</p>` : ''}
     ${r.status === 'trading' ? '<p class="fine">This protocol already trades: its implied value is the observed market cap. The comps factors do not apply.</p>' : ''}
     <h3>Farm plan</h3>
-    <ol id="farm">${farmPort(r.name, r.category, r.chains, r.tvl_usd, r.age_days, r.implied_value_usd).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
-    <p class="fine">A protocol records no token until its record says otherwise. Values are the entry's own claim, never a promise a token launches.</p>
+    <ol id="farm">${farmPort(r.name, r.category, r.chains, r.tvl_usd, r.age_days, r.implied_value_usd, r.status, META && META.loo ? META.loo.curve.median_miss : 3.4).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
+    <p class="fine">Values are the entry's own claim, never a promise a token launches.</p>
   </div>`;
   detailEl.hidden = false;
   $('dx').addEventListener('click', hideDetail);
@@ -330,6 +333,7 @@ function init() {
     set('looGlobal', META.loo.global.median_miss.toFixed(2));
     set('looCat', META.loo.category.median_miss.toFixed(2));
   }
+  if (META && META.walkforward && META.walkforward.length) set('wf', META.walkforward.map((w) => '×' + w[1].toFixed(2) + ' vs ×' + w[2].toFixed(2) + ' (n=' + w[0] + ')').join('; '));
   const pre = BOARD.filter((r) => r.status === 'pre-token').length;
   const trade = BOARD.filter((r) => r.status === 'trading').length;
   const anom = BOARD.filter((r) => r.status === 'trading-anomaly').length;
