@@ -94,6 +94,10 @@ function filtered() {
 
 function render() {
   const list = filtered();
+  // Ranks 1–3 are trading anchors, so the default pre-token view starts at rank 4.
+  // Say so only where it applies (pre-token / watchlist), not on the all / trading views.
+  const rankNote = $('rankNote');
+  if (rankNote) rankNote.hidden = !(statusFilter === 'pre-token' || statusFilter === 'watchlist');
   rowsEl.innerHTML = list.map((r) => {
     const chg = r.change_7d;
     const cls = chg === null ? '' : chg >= 0 ? 'up' : 'down';
@@ -119,14 +123,21 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function factorCard(label, value, note, num) {
+function factorCard(label, value, note, num, fill) {
   let bar = '';
   if (typeof num === 'number' && Number.isFinite(num) && num > 0) {
-    // Diverging bar centred on 1.0 (neutral): log scale, 0.05..20 spans the track.
-    const pos = Math.max(0, Math.min(100, 50 + (Math.log10(num) / 1.3) * 50));
-    const left = Math.min(50, pos), w = Math.abs(pos - 50);
-    const col = num >= 1 ? 'var(--accent)' : '#d97706';
-    bar = `<div class="fbar" role="img" aria-label="${label} ${num}"><div class="ftrack"><div class="ffill" style="left:${left.toFixed(1)}%;width:${Math.max(w, 1.5).toFixed(1)}%;background:${col}"></div><div class="fmid"></div></div></div>`;
+    if (fill) {
+      // Probability fill (0–1): fills left to right toward 100%, never amber-left.
+      // P_launch is a stated prior, so a fill reads as "how likely", not "how negative".
+      const w = Math.max(1.5, Math.min(100, num * 100));
+      bar = `<div class="fbar" role="img" aria-label="${label} ${num}"><div class="ftrack"><div class="ffill" style="left:0;width:${w.toFixed(1)}%;background:var(--accent)"></div></div></div>`;
+    } else {
+      // Diverging bar centred on 1.0 (neutral): log scale, 0.05..20 spans the track.
+      const pos = Math.max(0, Math.min(100, 50 + (Math.log10(num) / 1.3) * 50));
+      const left = Math.min(50, pos), w = Math.abs(pos - 50);
+      const col = num >= 1 ? 'var(--accent)' : '#d97706';
+      bar = `<div class="fbar" role="img" aria-label="${label} ${num}"><div class="ftrack"><div class="ffill" style="left:${left.toFixed(1)}%;width:${Math.max(w, 1.5).toFixed(1)}%;background:${col}"></div><div class="fmid"></div></div></div>`;
+    }
   }
   return `<div class="factor"><b>${value}</b><span>${label} — ${note}</span>${bar}</div>`;
 }
@@ -146,8 +157,9 @@ function showDetail(slug) {
       ${r.status === 'trading' ? '' : factorCard('F_growth', r.growth_multiplier.toFixed(3), '7-day momentum', r.growth_multiplier)}
       ${r.status === 'trading' ? '' : factorCard('F_age', r.age_multiplier.toFixed(3), 'age hump', r.age_multiplier)}
       ${r.status === 'trading' ? '' : factorCard('F_chain', r.chain_multiplier.toFixed(2), 'chain count', r.chain_multiplier)}
-      ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'stated prior', r.launch_probability)}
+      ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'stated prior', r.launch_probability, true)}
     </div>
+    ${r.status === 'trading' ? '' : '<p class="fine">M_cat and P_launch are multipliers below 1.0 for every pre-token protocol by construction.</p>'}
     ${r.status === 'trading' ? '<p class="fine">This protocol already trades: its implied value is the observed market cap. The comps factors do not apply.</p>' : ''}
     <h3>Farm plan</h3>
     <ol id="farm"><li>Loading the farm plan from board.json…</li></ol>
@@ -270,6 +282,16 @@ function init() {
     statsEl.textContent = 'No board data embedded.';
     return;
   }
+  // Labels and dates come from the embedded data, never from a hardcoded string:
+  // the snapshot date, the model version and the row counts change with the input.
+  const pillAll = $('pillAll'), pillWl = $('pillWl');
+  if (pillAll) pillAll.textContent = 'All ' + BOARD.length;
+  if (pillWl) pillWl.textContent = 'Watchlist · ' + (META ? META.watchlist_size : 40);
+  const snapDate = $('snapDate'), snapModel = $('snapModel'), footDate = $('footDate'), footModel = $('footModel');
+  if (snapDate) snapDate.textContent = META ? META.as_of : '2026-11-14';
+  if (snapModel) snapModel.textContent = META ? META.model_version : 'radar-v2-comps';
+  if (footDate) footDate.textContent = META ? META.as_of : '2026-11-14';
+  if (footModel) footModel.textContent = META ? META.model_version : 'radar-v2-comps';
   const pre = BOARD.filter((r) => r.status === 'pre-token').length;
   const trade = BOARD.filter((r) => r.status === 'trading').length;
   const anom = BOARD.filter((r) => r.status === 'trading-anomaly').length;

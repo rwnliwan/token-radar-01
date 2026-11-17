@@ -84,6 +84,7 @@ td .slug { color: var(--muted); font-size: 12px; display: block; }
   overflow: auto;
 }
 #detail[hidden] { display: none; }
+#rankNote[hidden] { display: none; }
 #detail .detail-card { max-width: 860px; width: 100%; margin-top: 40px; }
 .detail-card {
   background: var(--panel); border: 1px solid var(--accent-dim); border-radius: var(--radius);

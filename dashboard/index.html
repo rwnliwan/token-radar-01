@@ -19,14 +19,15 @@
   <select id="cat" aria-label="Filter by category"><option value="">All categories</option></select>
   <select id="chain" aria-label="Filter by chain"><option value="">All chains</option></select>
   <div class="pills" role="group" aria-label="Status filter">
-    <button data-f="all" type="button">All 200</button>
+    <button data-f="all" id="pillAll" type="button">All 200</button>
     <button data-f="pre-token" class="on" type="button">Pre-token</button>
     <button data-f="trading" type="button">Trading anchors</button>
-    <button data-f="watchlist" type="button">Watchlist · 40</button>
+    <button data-f="watchlist" id="pillWl" type="button">Watchlist · 40</button>
   </div>
 </section>
 
 <main>
+  <p class="fine" id="rankNote">Ranks are global board ranks; ranks 1–3 are trading anchors.</p>
   <table id="board">
     <thead>
       <tr>
@@ -63,11 +64,11 @@
     <li><strong>P<sub>launch</sub></strong> — a stated prior, not an observation: 0.65 for watchlist-eligible protocols, 0.50 for other pre-token ones.</li>
   </ul>
   <p>Pre-token means all three token fields are null (market cap, CoinGecko id, symbol). The board holds 200 rows: the whole 40-protocol watchlist plus the 160 highest-valued others outside bridges, staked products and exchanges. Each row carries a farm plan with concrete costs and times.</p>
-  <p class="fine">Snapshot: DefiLlama protocols at or above $5,000,000 TVL, fetched 2026-11-14. Model radar-v2-comps. The program runs twice and writes identical bytes; nothing here fetches the network.</p>
+  <p class="fine">Snapshot: DefiLlama protocols at or above $5,000,000 TVL, fetched <span id="snapDate">2026-11-14</span>. Model <span id="snapModel">radar-v2-comps</span>. The program runs twice and writes identical bytes; nothing here fetches the network.</p>
 </section>
 
 <footer>
-  <p>Token Launch Radar · model radar-v2-comps · snapshot 2026-11-14 · values are the entry's own claim, never a promise a token launches.</p>
+  <p>Token Launch Radar · model <span id="footModel">radar-v2-comps</span> · snapshot <span id="footDate">2026-11-14</span> · values are the entry's own claim, never a promise a token launches.</p>
 </footer>
 
 <script src="app.js"></script>
