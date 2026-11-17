@@ -627,9 +627,12 @@ export function stepText(step: FarmStep): string {
  * derived from the protocol's own record (category family, chains, TVL, age), never from a
  * hand-written list of names. The bridge step is skipped when the protocol's first chain
  * is Ethereum (there is nothing to bridge from); a second-feature step takes its place.
- * The last step nets the plan: the expected reward at a stated 0.01% farmer share of the
- * implied value, minus the plan's total gas and fees. The share is an assumption, stated
- * in the step itself, not a fact — and the capital is not a cost, it comes back on exit.
+ * The last step nets the plan: the expected reward is pro-rata — the wallet's capital
+ * as a share of the protocol's TVL, times a stated 10% farmer allocation of the implied
+ * value — minus the plan's total gas and fees. The 10% is an assumption, stated in the
+ * step itself, not a fact — and the capital is not a cost, it comes back on exit. At the
+ * capital the plan uses ($50-$250) the pro-rata reward is usually smaller than the fees,
+ * so the net is negative unless the airdrop is large.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null, impliedValue: number): FarmStep[] {
   const chain = chainOf(p);
@@ -641,8 +644,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, impliedValue:
   const weeks = Math.max(1, Math.round(hold / 7));
   const bridgeCost = chain === 'Ethereum' ? 0 : 5;
   const totalCost = gas + 2 * weeks + 11 + bridgeCost + 3;
-  const share = 0.0001;
-  const reward = impliedValue * share;
+  const reward = impliedValue * (capital / p.tvl_usd) * 0.10;
   const net = reward - totalCost;
   const money = (n: number): string =>
     n >= 1000 ? `$${Math.round(n).toLocaleString('en-US')}` : `$${Math.round(n * 100) / 100}`;
@@ -692,7 +694,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null, impliedValue:
       time: '10 minutes',
     },
     {
-      text: `Net: at a stated 0.01% farmer share of the ${money(impliedValue)} implied value, the expected reward is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}. The share is an assumption, not a fact; the $${capital} capital returns on exit.`,
+      text: `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}.${net < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${capital} capital returns on exit.`,
       cost: 'the gas and fees above',
       time: 'at launch',
     },

@@ -158,7 +158,7 @@ function farmPort(n, cat, ch, tvl, age, val) {
   const hold = age == null ? 30 : age < 180 ? 60 : age < 365 ? 45 : 30;
   const f = fam(cat), g = c >= 250 ? 8 : c >= 100 ? 5 : 3;
   const wk = Math.max(1, Math.round(hold / 7)), tc = g + 2 * wk + 11 + (h === 'Ethereum' ? 0 : 5) + 3;
-  const rw = (val || 0) * 0.0001, nt = rw - tc;
+  const rw = (val || 0) * c / tvl * 0.10, nt = rw - tc;
   const money = (x) => x >= 1000 ? '$' + Math.round(x).toLocaleString('en-US') : '$' + (Math.round(x * 100) / 100);
   const s = [
     { t: `Use a fresh wallet on ${h} holding only the funds to farm in ${n}; keep its seed phrase offline.`, c: 'under $3 gas for the first transaction', m: '5 minutes' },
@@ -174,7 +174,7 @@ function farmPort(n, cat, ch, tvl, age, val) {
   if (tvl >= 5e8) s.push({ t: sub(G, n, c, h), c: `about $${Math.max(2, Math.round(g / 2))} gas`, m: '10 minutes' });
   s.push(
     { t: `Before withdrawing, open ${n}'s own points page and claim only from the link it publishes.`, c: 'no fee to check, never pay to claim', m: '10 minutes' },
-    { t: `Net: at a stated 0.01% farmer share of the ${money(val || 0)} implied value, the expected reward is ${money(rw)}; minus about $${tc} gas and fees, the net is ${nt < 0 ? '−' : ''}${money(Math.abs(nt))}. The share is an assumption, not a fact; the $${c} capital returns on exit.`, c: 'the gas and fees above', m: 'at launch' },
+    { t: `Net: the $${c} share of ${money(tvl)} TVL, at a stated 10% farmer allocation of the ${money(val || 0)} implied value, is ${money(rw)}; minus about $${tc} gas and fees, the net is ${nt < 0 ? '−' : ''}${money(Math.abs(nt))}.${nt < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${c} capital returns on exit.`, c: 'the gas and fees above', m: 'at launch' },
     { t: `Exit in stages: unwind in ${n}, swap back to USDC, bridge home from ${h} at the points target or two weeks before launch. Log every transaction.`, c: '$8 to $15 to exit', m: '30 minutes' },
   );
   return s.map(st);
