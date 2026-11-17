@@ -119,8 +119,16 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function factorCard(label, value, note) {
-  return `<div class="factor"><b>${value}</b><span>${label} — ${note}</span></div>`;
+function factorCard(label, value, note, num) {
+  let bar = '';
+  if (typeof num === 'number' && Number.isFinite(num) && num > 0) {
+    // Diverging bar centred on 1.0 (neutral): log scale, 0.05..20 spans the track.
+    const pos = Math.max(0, Math.min(100, 50 + (Math.log10(num) / 1.3) * 50));
+    const left = Math.min(50, pos), w = Math.abs(pos - 50);
+    const col = num >= 1 ? 'var(--accent)' : '#d97706';
+    bar = `<div class="fbar" role="img" aria-label="${label} ${num}"><div class="ftrack"><div class="ffill" style="left:${left.toFixed(1)}%;width:${Math.max(w, 1.5).toFixed(1)}%;background:${col}"></div><div class="fmid"></div></div></div>`;
+  }
+  return `<div class="factor"><b>${value}</b><span>${label} — ${note}</span>${bar}</div>`;
 }
 
 function showDetail(slug) {
@@ -134,11 +142,11 @@ function showDetail(slug) {
     <p class="meta">Rank ${r.rank} · ${esc(r.category || 'no category')} · ${chainChips(r)} · TVL ${fmtUSD(r.tvl_usd)} · 7d ${fmtPct(r.change_7d)} · age ${fmtAge(r.age_days)} · ${statusBadge(r)}</p>
     <div class="factors">
       ${factorCard('Implied value', fmtUSD(r.implied_value_usd), r.status === 'pre-token' ? 'model estimate' : r.status === 'trading-anomaly' ? 'TVL × M_cat fallback' : 'observed market cap')}
-      ${r.status === 'trading' ? '' : factorCard('M_cat', mcat, 'comps multiple')}
-      ${r.status === 'trading' ? '' : factorCard('F_growth', r.growth_multiplier.toFixed(3), '7-day momentum')}
-      ${r.status === 'trading' ? '' : factorCard('F_age', r.age_multiplier.toFixed(3), 'age hump')}
-      ${r.status === 'trading' ? '' : factorCard('F_chain', r.chain_multiplier.toFixed(2), 'chain count')}
-      ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'stated prior')}
+      ${r.status === 'trading' ? '' : factorCard('M_cat', mcat, 'comps multiple', r.m_cat)}
+      ${r.status === 'trading' ? '' : factorCard('F_growth', r.growth_multiplier.toFixed(3), '7-day momentum', r.growth_multiplier)}
+      ${r.status === 'trading' ? '' : factorCard('F_age', r.age_multiplier.toFixed(3), 'age hump', r.age_multiplier)}
+      ${r.status === 'trading' ? '' : factorCard('F_chain', r.chain_multiplier.toFixed(2), 'chain count', r.chain_multiplier)}
+      ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'stated prior', r.launch_probability)}
     </div>
     ${r.status === 'trading' ? '<p class="fine">This protocol already trades: its implied value is the observed market cap. The comps factors do not apply.</p>' : ''}
     <h3>Farm plan</h3>

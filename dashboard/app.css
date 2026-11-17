@@ -95,6 +95,10 @@ td .slug { color: var(--muted); font-size: 12px; display: block; }
 .factor { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
 .factor b { display: block; font-size: 18px; color: var(--accent); }
 .factor span { color: var(--muted); font-size: 12px; }
+.factor .fbar { margin-top: 8px; }
+.factor .ftrack { position: relative; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.factor .ffill { position: absolute; top: 0; height: 100%; border-radius: 3px; }
+.factor .fmid { position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: var(--muted); opacity: .6; }
 .detail-card h3 { margin: 16px 0 8px; font-size: 15px; }
 .detail-card ol { margin: 0; padding-left: 22px; }
 .detail-card li { margin: 7px 0; }
