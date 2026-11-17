@@ -44,7 +44,7 @@ function buildRadarSafe(snapshot: Snapshot): { board: BoardRow[]; radar: RadarDa
       board: [],
       radar: {
         as_of: snapshot.as_of,
-        source: 'DefiLlama',
+        source: snapshot.source || 'DefiLlama',
         floor_usd: snapshot.floor_usd,
         model_version: MODEL_VERSION,
         ref_date: snapshot.as_of,

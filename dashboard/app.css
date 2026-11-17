@@ -76,6 +76,8 @@ td .slug { color: var(--muted); font-size: 12px; display: block; }
 .chart .clabel { fill: var(--ink); font-size: 12px; }
 .chart .cval { fill: var(--muted); font-size: 12px; }
 .chart .cbar { fill: var(--accent); opacity: .85; }
+.chart .sgrid { stroke: var(--line); stroke-width: 1; }
+.chart .saxis { fill: var(--muted); font-size: 11px; }
 #detail {
   position: fixed; inset: 0; z-index: 20; margin: 0; padding: 24px;
   background: rgba(5, 9, 12, .82); display: flex; align-items: flex-start; justify-content: center;

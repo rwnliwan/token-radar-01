@@ -514,13 +514,14 @@ export function stepText(step: FarmStep): string {
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
+  const name = p.name;
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
   const action = mainAction(p, capital, chain);
   const gas = capital >= 250 ? 8 : capital >= 100 ? 5 : 3;
   const steps: FarmStep[] = [
     {
-      text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
+      text: `Use a fresh wallet on ${chain} that holds only the funds you plan to farm in ${name}, and keep its seed phrase offline.`,
       cost: 'under $3 of gas for the first transaction',
       time: '5 minutes',
     },
@@ -537,19 +538,19 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   }
   steps.push(
     {
-      text: `Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.`,
+      text: `Make one qualifying action each week on ${chain}, such as a deposit, a borrow, a swap or a vote, so ${name} records the wallet as active.`,
       cost: 'about $2 of gas a week',
       time: '10 minutes a week',
     },
     {
-      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.`,
+      text: `Hold the position in ${name} for at least ${hold} days so the activity is counted in more than one snapshot.`,
       cost: `the $${capital} stays in the position`,
       time: `${hold} days`,
     },
   );
   if (p.tvl_usd >= 100_000_000) {
     steps.push({
-      text: `Claim the position's points or rewards weekly and re-deposit them so the balance compounds.`,
+      text: `Claim ${name}'s points or rewards weekly on ${chain} and re-deposit them so the balance compounds.`,
       cost: 'about $2 of gas a week',
       time: '10 minutes a week',
     });
@@ -564,7 +565,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '10 minutes',
     },
     {
-      text: `Exit in stages: unwind the position, swap back to USDC, and bridge home when the points target is met or two weeks before a token launch. Write every transaction in a farm log.`,
+      text: `Exit in stages: unwind the position in ${name}, swap back to USDC, and bridge home from ${chain} when the points target is met or two weeks before a token launch. Write every transaction in a farm log.`,
       cost: '$8 to $15 to exit',
       time: '30 minutes',
     },
@@ -724,7 +725,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
 
   const radar: RadarData = {
     as_of: snapshot.as_of,
-    source: 'DefiLlama',
+    source: snapshot.source || 'DefiLlama',
     floor_usd: snapshot.floor_usd,
     model_version: MODEL_VERSION,
     ref_date: snapshot.as_of,
