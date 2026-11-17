@@ -142,6 +142,55 @@ function factorCard(label, value, note, num, fill) {
   return `<div class="factor"><b>${value}</b><span>${label} — ${note}</span>${bar}</div>`;
 }
 
+// Farm plan computed in-page from the embedded row (no fetch); same actions/costs/times as the model, worded tighter for the text cap.
+// --- compact port v3 (golfed) ---
+const F = 'dex:dex,swap:dex,lend:lending,yield aggregator:yield,yield:yield,curator:curator,allocator:curator,rwa:rwa,basis:basis,cdp:cdp,collateral:cdp,derivative:derivatives,perpetual:derivatives,options:derivatives,chain:chain,staking pool:staking,staking:staking,locker:locker,lock:locker,prediction:prediction,stable:stable,insurance:insurance,bridge:bridge'.split(',').map((p) => p.split(':'));
+const fam = (c) => { const f = F.find(([s]) => (c || '').toLowerCase().includes(s)); return f ? f[1] : 'generic'; };
+const M = {
+  dex: 'Swap $c USDC into the pair on $n; provide $c liquidity on $h.',
+  lending: 'Supply $c USDC to $n on $h; keep the deposit earning.',
+  yield: 'Deposit $c USDC into the $n vault on $h; let it compound.',
+  curator: 'Deposit $c into a $n vault on $h; keep the vault shares.',
+  rwa: 'Mint $c of the yield asset through $n on $h; hold it.',
+  basis: 'Deposit $c USDC into $n\'s basis strategy on $h; keep the position.',
+  cdp: 'Lock $c collateral in $n on $h; mint against it at low leverage.',
+  derivatives: 'Deposit $c USDC as margin on $n; open one small hedged position.',
+  chain: 'Move $c USDC onto $h through $n; use it in the chain\'s apps.',
+  staking: 'Stake $c of the staking asset through $n; keep the receipt token.',
+  locker: 'Lock $c of tokens in $n on $h; keep the lock receipt.',
+  prediction: 'Fund $c on $n; place one market position on $h.',
+  stable: 'Mint or deposit $c of the stable asset through $n on $h.',
+  insurance: 'Buy $c of cover from $n on $h; keep the policy active.',
+  bridge: 'Bridge $c USDC through $n to $h; use the bridged funds there.',
+  generic: 'Deposit $c USDC into $n on $h; keep the position open.',
+};
+const G = 'Use one more feature of $n on $h with $h2 so the wallet\'s use is fuller.';
+const sub = (t, n, c, h) => t.replaceAll('$h2', '$' + Math.round(c / 2)).replaceAll('$c', '$' + c).replaceAll('$n', n).replaceAll('$h', h);
+const st = (s) => { let x = `${s.t} Cost: ${s.c}. Time: ${s.m}.`; if (x.length > 600) x = `${x.slice(0, 596)}...`; if (x.length < 20) x = `${x} Hold the position and check the protocol's own page.`; return x; };
+function farmPort(n, cat, ch, tvl, age) {
+  const h = ch ? ch.split(',')[0] : 'its main chain';
+  const c = tvl >= 5e8 ? 250 : tvl >= 1e8 ? 100 : 50;
+  const hold = age == null ? 30 : age < 180 ? 60 : age < 365 ? 45 : 30;
+  const f = fam(cat), g = c >= 250 ? 8 : c >= 100 ? 5 : 3;
+  const s = [
+    { t: `Use a fresh wallet on ${h} holding only the funds to farm in ${n}; keep its seed phrase offline.`, c: 'under $3 gas for the first transaction', m: '5 minutes' },
+    { t: sub(M[f], n, c, h), c: `$${c} capital and about $${g} gas`, m: '15 minutes to set up' },
+  ];
+  if (h !== 'Ethereum') s.push({ t: `Bridge $${c} USDC from Ethereum to ${h} via the canonical bridge; confirm arrival first.`, c: '$3 to $8 bridge fees plus gas', m: '15 to 30 minutes' });
+  else s.push({ t: sub(G, n, c, h), c: `about $${Math.max(2, Math.round(g / 2))} gas`, m: '10 minutes' });
+  s.push(
+    { t: `Do one qualifying action weekly on ${h} (deposit, borrow, swap or vote) so ${n} records the wallet active.`, c: 'about $2 gas a week', m: '10 minutes a week' },
+    { t: `Hold the position in ${n} at least ${hold} days so activity counts in more than one snapshot.`, c: `the $${c} stays in the position`, m: `${hold} days` },
+  );
+  if (tvl >= 1e8) s.push({ t: `Claim ${n}'s points or rewards weekly on ${h}; re-deposit so the balance compounds.`, c: 'about $2 gas a week', m: '10 minutes a week' });
+  if (tvl >= 5e8) s.push({ t: sub(G, n, c, h), c: `about $${Math.max(2, Math.round(g / 2))} gas`, m: '10 minutes' });
+  s.push(
+    { t: `Before withdrawing, open ${n}'s own points page and claim only from the link it publishes.`, c: 'no fee to check, never pay to claim', m: '10 minutes' },
+    { t: `Exit in stages: unwind in ${n}, swap back to USDC, bridge home from ${h} at the points target or two weeks before launch. Log every transaction.`, c: '$8 to $15 to exit', m: '30 minutes' },
+  );
+  return s.map(st);
+}
+
 function showDetail(slug) {
   const r = BOARD.find((x) => x.slug === slug);
   if (!r) return;
@@ -162,24 +211,11 @@ function showDetail(slug) {
     ${r.status === 'trading' ? '' : '<p class="fine">M_cat and P_launch are multipliers below 1.0 for every pre-token protocol by construction.</p>'}
     ${r.status === 'trading' ? '<p class="fine">This protocol already trades: its implied value is the observed market cap. The comps factors do not apply.</p>' : ''}
     <h3>Farm plan</h3>
-    <ol id="farm"><li>Loading the farm plan from board.json…</li></ol>
+    <ol id="farm">${farmPort(r.name, r.category, r.chains, r.tvl_usd, r.age_days).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
     <p class="fine">A protocol records no token until its record says otherwise. Values are the entry's own claim, never a promise a token launches.</p>
   </div>`;
   detailEl.hidden = false;
   $('dx').addEventListener('click', hideDetail);
-  fetch('../board.json').then((res) => res.json()).then((doc) => {
-    const row = (doc.rows || doc).find((x) => x.slug === slug);
-    const ol = $('farm');
-    if (!ol) return;
-    if (row && row.farm_steps) {
-      ol.innerHTML = row.farm_steps.map((s) => `<li>${esc(s)}</li>`).join('');
-    } else {
-      ol.innerHTML = '<li>The full farm plan for this protocol is in board.json (rank ' + r.rank + ').</li>';
-    }
-  }).catch(() => {
-    const ol = $('farm');
-    if (ol) ol.innerHTML = '<li>The full farm plan for this protocol is in board.json (rank ' + r.rank + ').</li>';
-  });
   writeHash();
 }
 
