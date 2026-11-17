@@ -311,8 +311,6 @@ function init() {
     statsEl.textContent = 'No board data embedded.';
     return;
   }
-  // Labels and dates come from the embedded data, never from a hardcoded string:
-  // the snapshot date, the model version and the row counts change with the input.
   const pillAll = $('pillAll'), pillWl = $('pillWl');
   if (pillAll) pillAll.textContent = 'All ' + BOARD.length;
   if (pillWl) pillWl.textContent = 'Watchlist · ' + (META ? META.watchlist_size : 40);
@@ -333,12 +331,13 @@ function init() {
     set('looGlobal', META.loo.global.median_miss.toFixed(2));
     set('looCat', META.loo.category.median_miss.toFixed(2));
   }
-  if (META && META.walkforward && META.walkforward.length) set('wf', META.walkforward.map((w) => '×' + w[1].toFixed(2) + ' vs ×' + w[2].toFixed(2) + ' (n=' + w[0] + ')').join('; '));
+  const wf = META && META.walkforward && META.walkforward.length ? META.walkforward.map((w) => '×' + w[1].toFixed(2) + ' vs ×' + w[2].toFixed(2) + ' (n=' + w[0] + ')').join('; ') : '';
+  if (wf) set('wf', wf);
   const pre = BOARD.filter((r) => r.status === 'pre-token').length;
   const trade = BOARD.filter((r) => r.status === 'trading').length;
   const anom = BOARD.filter((r) => r.status === 'trading-anomaly').length;
   statsEl.textContent = BOARD.length + ' protocols · ' + (META ? META.watchlist_size : 40) + ' on the watchlist · ' +
-    pre + ' pre-token · ' + trade + ' trading · ' + anom + ' anomaly · snapshot ' + (META ? META.as_of : '2026-11-14') + ' · model ' + (META ? META.model_version : 'radar-v3-curve');
+    pre + ' pre-token · ' + trade + ' trading · ' + anom + ' anomaly · snapshot ' + (META ? META.as_of : '2026-11-14') + ' · model ' + (META ? META.model_version : 'radar-v3-curve') + (wf ? ' · walk-forward curve vs flat median: ' + wf : '');
   renderChart();
   renderScatter();
   const cats = [...new Set(BOARD.map((r) => r.category).filter(Boolean))].sort();
