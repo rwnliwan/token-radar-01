@@ -1,22 +1,6 @@
-/* Token Launch Radar — the board, the filter, the detail view.
- *
- * HOW THE VALUE IS MADE (the judge reads this file, so the model is stated here):
- *   implied_value_usd = round(TVL x M_cat x F_growth x F_age x F_chain x P_launch)
- * for a protocol that records no token (all three token fields null). A protocol whose
- * token already trades is valued at its observed market cap and marked as a trading
- * anchor; the one case of a recorded token with no market cap is valued from comps and
- * marked as an anomaly. M_cat is the median market-cap/TVL of trading protocols in the
- * same category and of similar size (TVL within 0.2x-5x), winsorized to 0.05-20, at
- * least 5 comps, else the category median, else the global median (0.205). F_growth is
- * seven-day TVL momentum capped at -50% to +100%. F_age is a hump: 0.85 under 90 days,
- * rising to 1.15 at 720 days, fading to 0.95 past 1,460 days, 0.90 when the age is
- * unknown. F_chain is 1.00 / 1.05 / 1.10. P_launch is a stated prior, not an
- * observation: 0.65 for watchlist-eligible protocols, 0.50 for other pre-token ones.
- * The board holds 200 rows: the whole 40-protocol watchlist plus the 160
- * highest-valued others outside bridges, staked products and exchanges. Values are
- * strictly decreasing down the ranks. The snapshot is DefiLlama protocols at or above
- * $5,000,000 TVL, fetched 2026-11-14. Model radar-v2-comps.
- */
+/* Token Launch Radar — board, filter, detail view. Value: round(TVL x M_cat x
+ * F_growth x F_age x F_chain x P_launch) for pre-token; observed market cap for
+ * trading anchors; TVL x M_cat for the one anomaly. Full model in index.html. */
 
 // The board data, embedded by main.ts when it builds the output (an empty array here).
 // Rows are positional arrays [rank, slug, name, category, chains, tvl, 7d, age, value,
@@ -196,6 +180,7 @@ function showDetail(slug) {
   if (!r) return;
   const launch = r.launch_probability === null ? '—' : r.launch_probability.toFixed(2);
   const mcat = r.m_cat === 0 ? 'observed mcap' : r.m_cat.toFixed(3);
+  const arith = r.status === 'pre-token' ? `TVL ${fmtUSD(r.tvl_usd)} × M_cat ${r.m_cat.toFixed(3)} × F_growth ${r.growth_multiplier.toFixed(3)} × F_age ${r.age_multiplier.toFixed(3)} × F_chain ${r.chain_multiplier.toFixed(2)} × P_launch ${launch} = ${fmtUSD(r.implied_value_usd)}` : r.status === 'trading-anomaly' ? `TVL ${fmtUSD(r.tvl_usd)} × M_cat ${r.m_cat.toFixed(3)} = ${fmtUSD(r.implied_value_usd)}` : '';
   detailEl.innerHTML = `<div class="detail-card">
     <button class="close" type="button" id="dx">Close ✕</button>
     <h2>${esc(r.name)} <span class="slug">${esc(r.slug)}</span></h2>
@@ -208,6 +193,7 @@ function showDetail(slug) {
       ${r.status === 'trading' ? '' : factorCard('F_chain', r.chain_multiplier.toFixed(2), 'chain count', r.chain_multiplier)}
       ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'stated prior', r.launch_probability, true)}
     </div>
+    ${arith ? `<p class="fine">${arith}</p>` : ''}
     ${r.status === 'trading' ? '' : '<p class="fine">M_cat and P_launch are multipliers below 1.0 for every pre-token protocol by construction.</p>'}
     ${r.status === 'trading' ? '<p class="fine">This protocol already trades: its implied value is the observed market cap. The comps factors do not apply.</p>' : ''}
     <h3>Farm plan</h3>
