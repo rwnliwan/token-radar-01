@@ -57,7 +57,7 @@
   <h2>How this radar works</h2>
   <p><strong>Implied value</strong> = TVL × M<sub>cat</sub> × F<sub>growth</sub> × F<sub>age</sub> × F<sub>chain</sub> × P<sub>launch</sub>, for a protocol that records no token. A protocol whose token already trades is valued at its observed market cap instead, and marked as a trading anchor.</p>
   <ul>
-    <li><strong>M<sub>cat</sub></strong> — the comps multiple: the median market-cap/TVL of trading protocols in the same category and of similar size (TVL within 0.2×–5×), winsorized to 0.05–20, at least 5 comps, else the category median, else the global median (0.205). No name is ever special-cased.</li>
+    <li><strong>M<sub>cat</sub></strong> — the comps multiple: the median market-cap/TVL of trading protocols in the same category and of similar size (TVL within 0.2×–5×), winsorized to 0.05–20, at least 5 comps, else the category median, else the global median (<span id="globMed">0.205</span>). No name is ever special-cased.</li>
     <li><strong>F<sub>growth</sub></strong> — seven-day TVL momentum, capped at −50% to +100%.</li>
     <li><strong>F<sub>age</sub></strong> — a hump: trust grows to 1.15 at two years without a token, then fades to 0.95; unknown age scores 0.90.</li>
     <li><strong>F<sub>chain</sub></strong> — 1.00 for one chain, 1.05 for two or three, 1.10 for four or more.</li>

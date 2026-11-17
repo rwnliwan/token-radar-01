@@ -1,6 +1,6 @@
 /* Token Launch Radar — board, filter, detail view. Value: round(TVL x M_cat x
  * F_growth x F_age x F_chain x P_launch) for pre-token; observed market cap for
- * trading anchors; TVL x M_cat for the one anomaly. Full model in index.html. */
+ * trading anchors; TVL x M_cat for anomalies. Full model in index.html. */
 
 // The board data, embedded by main.ts when it builds the output (an empty array here).
 // Rows are positional arrays [rank, slug, name, category, chains, tvl, 7d, age, value,
@@ -28,6 +28,7 @@ function fmtUSD(n) {
   if (n >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
   return '$' + n;
 }
+function fmtExact(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
 function fmtPct(v) {
   if (v === null || v === undefined) return '—';
   return (v > 0 ? '+' : '') + v.toFixed(1) + '%';
@@ -180,7 +181,7 @@ function showDetail(slug) {
   if (!r) return;
   const launch = r.launch_probability === null ? '—' : r.launch_probability.toFixed(2);
   const mcat = r.m_cat === 0 ? 'observed mcap' : r.m_cat.toFixed(3);
-  const arith = r.status === 'pre-token' ? `TVL ${fmtUSD(r.tvl_usd)} × M_cat ${r.m_cat.toFixed(3)} × F_growth ${r.growth_multiplier.toFixed(3)} × F_age ${r.age_multiplier.toFixed(3)} × F_chain ${r.chain_multiplier.toFixed(2)} × P_launch ${launch} = ${fmtUSD(r.implied_value_usd)}` : r.status === 'trading-anomaly' ? `TVL ${fmtUSD(r.tvl_usd)} × M_cat ${r.m_cat.toFixed(3)} = ${fmtUSD(r.implied_value_usd)}` : '';
+  const arith = r.status === 'pre-token' ? `TVL ${fmtExact(r.tvl_usd)} × M_cat ${r.m_cat.toFixed(4)} × F_growth ${r.growth_multiplier.toFixed(4)} × F_age ${r.age_multiplier.toFixed(4)} × F_chain ${r.chain_multiplier.toFixed(2)} × P_launch ${launch} = ${fmtExact(r.implied_value_usd)}` : r.status === 'trading-anomaly' ? `TVL ${fmtExact(r.tvl_usd)} × M_cat ${r.m_cat.toFixed(4)} = ${fmtExact(r.implied_value_usd)}` : '';
   detailEl.innerHTML = `<div class="detail-card">
     <button class="close" type="button" id="dx">Close ✕</button>
     <h2>${esc(r.name)} <span class="slug">${esc(r.slug)}</span></h2>
@@ -194,7 +195,6 @@ function showDetail(slug) {
       ${r.status === 'trading' ? '' : factorCard('P_launch', launch, 'stated prior', r.launch_probability, true)}
     </div>
     ${arith ? `<p class="fine">${arith}</p>` : ''}
-    ${r.status === 'trading' ? '' : '<p class="fine">M_cat and P_launch are multipliers below 1.0 for every pre-token protocol by construction.</p>'}
     ${r.status === 'trading' ? '<p class="fine">This protocol already trades: its implied value is the observed market cap. The comps factors do not apply.</p>' : ''}
     <h3>Farm plan</h3>
     <ol id="farm">${farmPort(r.name, r.category, r.chains, r.tvl_usd, r.age_days).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
@@ -246,7 +246,7 @@ function renderChart() {
     .slice(0, 10);
   if (!rows.length) { el.innerHTML = '<p class="fine">No comps data.</p>'; return; }
   const max = rows[0].multiple;
-  const W = 760, barH = 22, gap = 6, labelW = 170, valX = 640;
+  const W = 760, barH = 22, gap = 6, labelW = 170, valX = 600;
   const H = rows.length * (barH + gap) + 8;
   const barArea = valX - labelW - 12;
   const bars = rows.map((c, i) => {
@@ -254,10 +254,10 @@ function renderChart() {
     const w = Math.max(2, Math.round((barArea * c.multiple) / max));
     return `<text x="0" y="${y + 15}" class="clabel">${esc(c.category)}</text>` +
       `<rect x="${labelW}" y="${y}" width="${w}" height="${barH}" rx="4" class="cbar"/>` +
-      `<text x="${valX}" y="${y + 15}" class="cval">${c.multiple.toFixed(2)}× · ${c.comps} comps</text>`;
+      `<text x="${valX}" y="${y + 15}" class="cval">${c.source === 'global' ? 'global median · ' + c.comps + ' comps' : c.multiple.toFixed(2) + '× · ' + c.comps + ' comps'}</text>`;
   }).join('');
   el.innerHTML = `<h2>Comps multiple by category</h2>` +
-    `<p class="fine">Median market-cap/TVL of trading protocols per category (winsorized 0.05–20). The bar is the M<sub>cat</sub> the board multiplies each pre-token protocol's TVL by.</p>` +
+    `<p class="fine">Median market-cap/TVL of trading protocols per category (winsorized 0.05–20, TVL-range subset, else the category, else the global median — those bars say so). The bar is the M<sub>cat</sub> the board multiplies each pre-token protocol's TVL by.</p>` +
     `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Comps multiple by category">${bars}</svg>`;
 }
 
@@ -295,8 +295,7 @@ function renderScatter() {
     `<p class="fine">Each dot is one board row (log scales). Blue = pre-token, green = trading anchor, red = anomaly. Value tracks TVL through the comps multiple; trading rows sit on their observed market cap.</p>` +
     `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="TVL versus implied value scatter">${grid}${dots}` +
     `<text x="${(ML + W - MR) / 2}" y="${H - 8}" class="saxis" text-anchor="middle">TVL (log)</text>` +
-    `<text x="14" y="${(MT + H - MB) / 2}" class="saxis" text-anchor="middle" transform="rotate(-90 14 ${(MT + H - MB) / 2})">Implied value (log)</text></svg>` +
-    `<p class="fine"><span style="color:#2563eb">●</span> pre-token &nbsp; <span style="color:#16a34a">●</span> trading &nbsp; <span style="color:#dc2626">●</span> anomaly</p>`;
+    `<text x="14" y="${(MT + H - MB) / 2}" class="saxis" text-anchor="middle" transform="rotate(-90 14 ${(MT + H - MB) / 2})">Implied value (log)</text></svg>`;
 }
 
 function init() {
@@ -309,9 +308,10 @@ function init() {
   const pillAll = $('pillAll'), pillWl = $('pillWl');
   if (pillAll) pillAll.textContent = 'All ' + BOARD.length;
   if (pillWl) pillWl.textContent = 'Watchlist · ' + (META ? META.watchlist_size : 40);
-  const snapDate = $('snapDate'), snapModel = $('snapModel'), footDate = $('footDate'), footModel = $('footModel');
+  const snapDate = $('snapDate'), snapModel = $('snapModel'), footDate = $('footDate'), footModel = $('footModel'), globMed = $('globMed');
   if (snapDate) snapDate.textContent = META ? META.as_of : '2026-11-14';
   if (snapModel) snapModel.textContent = META ? META.model_version : 'radar-v2-comps';
+  if (globMed) globMed.textContent = META ? META.m_global.toFixed(4) : '0.205';
   if (footDate) footDate.textContent = META ? META.as_of : '2026-11-14';
   if (footModel) footModel.textContent = META ? META.model_version : 'radar-v2-comps';
   const pre = BOARD.filter((r) => r.status === 'pre-token').length;
