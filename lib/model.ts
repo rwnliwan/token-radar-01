@@ -39,7 +39,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and the dossier quotes it. */
-export const MODEL_VERSION = 'radar-v2-comps';
+export const MODEL_VERSION = 'radar-v3-curve';
 
 /** The reference date for ages: the snapshot's context date, fixed so two runs agree. */
 export const REF_DATE = '2026-11-16';
@@ -97,7 +97,7 @@ export interface BoardRow {
   implied_value_usd: number;
   model: {
     m_cat: number;
-    m_cat_source: 'range' | 'category' | 'global' | 'observed';
+    m_cat_source: 'range' | 'category' | 'global' | 'observed' | 'curve';
     growth_multiplier: number;
     age_multiplier: number;
     chain_multiplier: number;
@@ -141,6 +141,29 @@ export interface CompsRow {
   source: 'range' | 'category' | 'global';
 }
 
+/** One method's leave-one-out score: median miss factor and the share within 2x / 3x. */
+export interface LooStats {
+  n: number;
+  median_miss: number;
+  within_2x: number;
+  within_3x: number;
+}
+
+/** The leave-one-out validation, computed at runtime from the sealed snapshot. */
+export interface LooResults {
+  global: LooStats;
+  category: LooStats;
+  curve: LooStats;
+  slope: number;
+}
+
+/** The fitted size curve: log(mcap) = a + b * log(tvl), fit on the trading pool. */
+export interface CurveFit {
+  a: number;
+  b: number;
+  n: number;
+}
+
 /** Everything the dashboard renders, from the snapshot. */
 export interface RadarData {
   as_of: string;
@@ -149,6 +172,9 @@ export interface RadarData {
   model_version: string;
   ref_date: string;
   m_global: number;
+  curve_a: number;
+  curve_b: number;
+  loo: LooResults;
   watchlist_size: number;
   board_size: number;
   rows: RadarRow[];
@@ -256,6 +282,92 @@ export function compsMultiple(
   return { multiple: mGlobal, source: 'global', comps: inCategory.length };
 }
 
+/**
+ * The fitted size curve: ordinary least squares of log(mcap) on log(tvl) over the
+ * trading pool, fit at runtime from the sealed snapshot, never hardcoded. A flat
+ * median multiple prices a $5B protocol the same per dollar as a $5M one; the curve
+ * does not — the fitted slope is well under 1, so the multiple falls as TVL grows.
+ * With fewer than 2 comps the fit is undefined and the curve is flat at 1x.
+ */
+export function fitCurve(pool: SnapshotProtocol[]): CurveFit {
+  const pts = pool.filter((p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  const n = pts.length;
+  if (n < 2) return { a: 0, b: 0, n };
+  const xs = pts.map((p) => Math.log(p.tvl_usd));
+  const ys = pts.map((p) => Math.log(p.mcap_usd!));
+  const mx = xs.reduce((s, x) => s + x, 0) / n;
+  const my = ys.reduce((s, y) => s + y, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (xs[i]! - mx) * (ys[i]! - my);
+    sxx += (xs[i]! - mx) * (xs[i]! - mx);
+  }
+  const b = sxx === 0 ? 0 : sxy / sxx;
+  return { a: my - b * mx, b, n };
+}
+
+/** The curve's multiple at a TVL: the fitted market cap divided by the TVL. */
+export function curveMultiple(tvl: number, fit: CurveFit): number {
+  if (tvl <= 0) return 1;
+  return Math.exp(fit.a + fit.b * Math.log(tvl)) / tvl;
+}
+
+/** Median miss factor and the share within 2x / 3x, for one method's LOO predictions. */
+function missStats(preds: number[], obss: number[]): LooStats {
+  const factors: number[] = [];
+  for (let i = 0; i < preds.length; i++) {
+    const p = preds[i]!;
+    const o = obss[i]!;
+    if (p > 0 && o > 0) factors.push(Math.max(p / o, o / p));
+  }
+  const n = factors.length;
+  if (n === 0) return { n: 0, median_miss: 0, within_2x: 0, within_3x: 0 };
+  const sorted = [...factors].sort((a, b) => a - b);
+  const mid = Math.floor(n / 2);
+  const med = n % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  return {
+    n,
+    median_miss: Math.round(med * 100) / 100,
+    within_2x: Math.round((100 * factors.filter((f) => f <= 2).length) / n),
+    within_3x: Math.round((100 * factors.filter((f) => f <= 3).length) / n),
+  };
+}
+
+/**
+ * Leave-one-out validation, computed at runtime from the sealed snapshot: each trading
+ * protocol is predicted with itself removed from the pool, by three methods — the
+ * global median, the category-median comps model, and the fitted size curve. This is
+ * internal consistency on tokens that already trade, not validation against launches:
+ * every comp survived to launch, so the numbers flatter any method. Reported as-is,
+ * including when a method looks weak.
+ */
+export function computeLOO(pool: SnapshotProtocol[]): LooResults {
+  const n = pool.length;
+  const gPreds: number[] = [];
+  const cPreds: number[] = [];
+  const vPreds: number[] = [];
+  const obss: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const q = pool[i]!;
+    const others = pool.filter((_, j) => j !== i);
+    const mG = median(others.map((p) => winsorize(p.mcap_usd! / p.tvl_usd)));
+    gPreds.push(q.tvl_usd * mG);
+    const { multiple } = compsMultiple(q, others, mG);
+    cPreds.push(q.tvl_usd * multiple);
+    const fit = fitCurve(others);
+    vPreds.push(Math.exp(fit.a + fit.b * Math.log(q.tvl_usd)));
+    obss.push(q.mcap_usd!);
+  }
+  const fitAll = fitCurve(pool);
+  return {
+    global: missStats(gPreds, obss),
+    category: missStats(cPreds, obss),
+    curve: missStats(vPreds, obss),
+    slope: Math.round(fitAll.b * 100) / 100,
+  };
+}
+
 /** The growth multiplier: momentum over seven days, capped so one week cannot dominate. */
 export function growthMultiplier(change7d: number | null): number {
   if (change7d === null) return 1.0;
@@ -292,7 +404,7 @@ export interface ScoredValue {
   value: number;
   status: 'pre-token' | 'trading' | 'trading-anomaly';
   mCat: number;
-  mCatSource: 'range' | 'category' | 'global' | 'observed';
+  mCatSource: 'range' | 'category' | 'global' | 'observed' | 'curve';
   growthMultiplier: number;
   ageMultiplier: number;
   chainMultiplier: number;
@@ -306,6 +418,7 @@ export function scoreProtocol(
   mGlobal: number,
   floorUsd: number,
   asOf: string,
+  fit: CurveFit,
 ): ScoredValue {
   // Ages are measured against the snapshot's own as_of, not a hardcoded date: a
   // hardcoded REF_DATE goes stale the moment the snapshot is refreshed, and every
@@ -316,14 +429,17 @@ export function scoreProtocol(
   const ageMult = ageMultiplier(age);
   const chainMult = chainMultiplier(p.chains);
   if (isPreToken(p)) {
-    const { multiple, source } = compsMultiple(p, pool, mGlobal);
+    // The multiple is the fitted size curve, not a category median: the curve prices
+    // a large protocol lower per TVL dollar than a small one, which the LOO check
+    // shows predicts trading tokens better than the flat or category median.
+    const multiple = curveMultiple(p.tvl_usd, fit);
     const launch = launchProbability(p, floorUsd);
     const raw = p.tvl_usd * multiple * growth * ageMult * chainMult * launch;
     return {
       value: Math.min(VALUE_CAP, Math.max(VALUE_FLOOR, Math.round(raw))),
       status: 'pre-token',
       mCat: multiple,
-      mCatSource: source,
+      mCatSource: 'curve',
       growthMultiplier: growth,
       ageMultiplier: ageMult,
       chainMultiplier: chainMult,
@@ -346,14 +462,14 @@ export function scoreProtocol(
   }
   if (p.gecko_id !== null) {
     // The one anomaly the design prices: a token recorded but no market cap. Its value
-    // is the comps estimate, without the launch probability (it already trades).
-    const { multiple, source } = compsMultiple(p, pool, mGlobal);
+    // is the curve estimate, without the launch probability (it already trades).
+    const multiple = curveMultiple(p.tvl_usd, fit);
     const raw = p.tvl_usd * multiple;
     return {
       value: Math.min(VALUE_CAP, Math.max(VALUE_FLOOR, Math.round(raw))),
       status: 'trading-anomaly',
       mCat: multiple,
-      mCatSource: source,
+      mCatSource: 'curve',
       growthMultiplier: growth,
       ageMultiplier: ageMult,
       chainMultiplier: chainMult,
@@ -511,14 +627,25 @@ export function stepText(step: FarmStep): string {
  * derived from the protocol's own record (category family, chains, TVL, age), never from a
  * hand-written list of names. The bridge step is skipped when the protocol's first chain
  * is Ethereum (there is nothing to bridge from); a second-feature step takes its place.
+ * The last step nets the plan: the expected reward at a stated 0.01% farmer share of the
+ * implied value, minus the plan's total gas and fees. The share is an assumption, stated
+ * in the step itself, not a fact — and the capital is not a cost, it comes back on exit.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
+export function farmSteps(p: SnapshotProtocol, age: number | null, impliedValue: number): FarmStep[] {
   const chain = chainOf(p);
   const name = p.name;
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
   const action = mainAction(p, capital, chain);
   const gas = capital >= 250 ? 8 : capital >= 100 ? 5 : 3;
+  const weeks = Math.max(1, Math.round(hold / 7));
+  const bridgeCost = chain === 'Ethereum' ? 0 : 5;
+  const totalCost = gas + 2 * weeks + 11 + bridgeCost + 3;
+  const share = 0.0001;
+  const reward = impliedValue * share;
+  const net = reward - totalCost;
+  const money = (n: number): string =>
+    n >= 1000 ? `$${Math.round(n).toLocaleString('en-US')}` : `$${Math.round(n * 100) / 100}`;
   const steps: FarmStep[] = [
     {
       text: `Use a fresh wallet on ${chain} that holds only the funds you plan to farm in ${name}, and keep its seed phrase offline.`,
@@ -565,6 +692,11 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '10 minutes',
     },
     {
+      text: `Net: at a stated 0.01% farmer share of the ${money(impliedValue)} implied value, the expected reward is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}. The share is an assumption, not a fact; the $${capital} capital returns on exit.`,
+      cost: 'the gas and fees above',
+      time: 'at launch',
+    },
+    {
       text: `Exit in stages: unwind the position in ${name}, swap back to USDC, and bridge home from ${chain} when the points target is met or two weeks before a token launch. Write every transaction in a farm log.`,
       cost: '$8 to $15 to exit',
       time: '30 minutes',
@@ -602,8 +734,10 @@ function compareScored(
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
   const pool = tradingPool(snapshot.protocols);
   const mGlobal = median(pool.map((p) => winsorize(p.mcap_usd! / p.tvl_usd)));
+  const fit = fitCurve(pool);
+  const loo = computeLOO(pool);
   const scored = new Map<string, ScoredValue>();
-  for (const p of snapshot.protocols) scored.set(p.slug, scoreProtocol(p, pool, mGlobal, snapshot.floor_usd, snapshot.as_of));
+  for (const p of snapshot.protocols) scored.set(p.slug, scoreProtocol(p, pool, mGlobal, snapshot.floor_usd, snapshot.as_of, fit));
 
   const index = bySlug(snapshot.protocols);
   const watchlistRows: SnapshotProtocol[] = [];
@@ -622,14 +756,14 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   for (const p of watchlistRows) {
     const sc = scored.get(p.slug)!;
     if (Number.isFinite(sc.value) && sc.value > 0) continue;
-    const { multiple, source } = compsMultiple(p, pool, mGlobal);
+    const multiple = curveMultiple(p.tvl_usd, fit);
     const raw = p.tvl_usd * multiple;
     scored.set(p.slug, {
       ...sc,
       value: Math.min(VALUE_CAP, Math.max(VALUE_FLOOR, Math.round(raw))),
       status: 'trading-anomaly',
       mCat: multiple,
-      mCatSource: source,
+      mCatSource: 'curve',
     });
   }
   const fillerPool = snapshot.protocols
@@ -709,7 +843,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
         chain_multiplier: round4(sc.chainMultiplier),
         launch_probability: sc.launchProbability,
       },
-      farm_steps: farmSteps(s.p, sc.age).map(stepText),
+      farm_steps: farmSteps(s.p, sc.age, s.value).map(stepText),
     };
   });
 
@@ -730,6 +864,9 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     model_version: MODEL_VERSION,
     ref_date: snapshot.as_of,
     m_global: round4(mGlobal),
+    curve_a: round4(fit.a),
+    curve_b: round4(fit.b),
+    loo,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     rows: board.map((r) => [

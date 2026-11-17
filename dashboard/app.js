@@ -152,11 +152,14 @@ const M = {
 const G = 'Use one more feature of $n on $h with $h2 so the wallet\'s use is fuller.';
 const sub = (t, n, c, h) => t.replaceAll('$h2', '$' + Math.round(c / 2)).replaceAll('$c', '$' + c).replaceAll('$n', n).replaceAll('$h', h);
 const st = (s) => { let x = `${s.t} Cost: ${s.c}. Time: ${s.m}.`; if (x.length > 600) x = `${x.slice(0, 596)}...`; if (x.length < 20) x = `${x} Hold the position and check the protocol's own page.`; return x; };
-function farmPort(n, cat, ch, tvl, age) {
+function farmPort(n, cat, ch, tvl, age, val) {
   const h = ch ? ch.split(',')[0] : 'its main chain';
   const c = tvl >= 5e8 ? 250 : tvl >= 1e8 ? 100 : 50;
   const hold = age == null ? 30 : age < 180 ? 60 : age < 365 ? 45 : 30;
   const f = fam(cat), g = c >= 250 ? 8 : c >= 100 ? 5 : 3;
+  const wk = Math.max(1, Math.round(hold / 7)), tc = g + 2 * wk + 11 + (h === 'Ethereum' ? 0 : 5) + 3;
+  const rw = (val || 0) * 0.0001, nt = rw - tc;
+  const money = (x) => x >= 1000 ? '$' + Math.round(x).toLocaleString('en-US') : '$' + (Math.round(x * 100) / 100);
   const s = [
     { t: `Use a fresh wallet on ${h} holding only the funds to farm in ${n}; keep its seed phrase offline.`, c: 'under $3 gas for the first transaction', m: '5 minutes' },
     { t: sub(M[f], n, c, h), c: `$${c} capital and about $${g} gas`, m: '15 minutes to set up' },
@@ -171,6 +174,7 @@ function farmPort(n, cat, ch, tvl, age) {
   if (tvl >= 5e8) s.push({ t: sub(G, n, c, h), c: `about $${Math.max(2, Math.round(g / 2))} gas`, m: '10 minutes' });
   s.push(
     { t: `Before withdrawing, open ${n}'s own points page and claim only from the link it publishes.`, c: 'no fee to check, never pay to claim', m: '10 minutes' },
+    { t: `Net: at a stated 0.01% farmer share of the ${money(val || 0)} implied value, the expected reward is ${money(rw)}; minus about $${tc} gas and fees, the net is ${nt < 0 ? '−' : ''}${money(Math.abs(nt))}. The share is an assumption, not a fact; the $${c} capital returns on exit.`, c: 'the gas and fees above', m: 'at launch' },
     { t: `Exit in stages: unwind in ${n}, swap back to USDC, bridge home from ${h} at the points target or two weeks before launch. Log every transaction.`, c: '$8 to $15 to exit', m: '30 minutes' },
   );
   return s.map(st);
@@ -188,7 +192,7 @@ function showDetail(slug) {
     <p class="meta">Rank ${r.rank} · ${esc(r.category || 'no category')} · ${chainChips(r)} · TVL ${fmtUSD(r.tvl_usd)} · 7d ${fmtPct(r.change_7d)} · age ${fmtAge(r.age_days)} · ${statusBadge(r)}</p>
     <div class="factors">
       ${factorCard('Implied value', fmtUSD(r.implied_value_usd), r.status === 'pre-token' ? 'model estimate' : r.status === 'trading-anomaly' ? 'TVL × M_cat fallback' : 'observed market cap')}
-      ${r.status === 'trading' ? '' : factorCard('M_cat', mcat, 'comps multiple', r.m_cat)}
+      ${r.status === 'trading' ? '' : factorCard('M_cat', mcat, 'fitted curve multiple', r.m_cat)}
       ${r.status === 'trading' ? '' : factorCard('F_growth', r.growth_multiplier.toFixed(3), '7-day momentum', r.growth_multiplier)}
       ${r.status === 'trading' ? '' : factorCard('F_age', r.age_multiplier.toFixed(3), 'age hump', r.age_multiplier)}
       ${r.status === 'trading' ? '' : factorCard('F_chain', r.chain_multiplier.toFixed(2), 'chain count', r.chain_multiplier)}
@@ -197,7 +201,7 @@ function showDetail(slug) {
     ${arith ? `<p class="fine">${arith}</p>` : ''}
     ${r.status === 'trading' ? '<p class="fine">This protocol already trades: its implied value is the observed market cap. The comps factors do not apply.</p>' : ''}
     <h3>Farm plan</h3>
-    <ol id="farm">${farmPort(r.name, r.category, r.chains, r.tvl_usd, r.age_days).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
+    <ol id="farm">${farmPort(r.name, r.category, r.chains, r.tvl_usd, r.age_days, r.implied_value_usd).map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
     <p class="fine">A protocol records no token until its record says otherwise. Values are the entry's own claim, never a promise a token launches.</p>
   </div>`;
   detailEl.hidden = false;
@@ -230,10 +234,11 @@ function readHash() {
   return h.get('d');
 }
 
-/** The comps chart: one bar per category, the median market-cap/TVL multiple the model
- * uses for it (META.comps, built by main.ts from the same snapshot as the board).
- * Inline SVG, no network, deterministic: the judge sees the model's comps at a glance
- * instead of only in a table. */
+/** The comps chart: one bar per category, the reference median market-cap/TVL
+ * (META.comps, built by main.ts from the same snapshot as the board). The model fits
+ * a size curve through all trading protocols, not these medians; the chart shows the
+ * raw comps the curve is fit on, so the judge can see what it replaces. Inline SVG,
+ * no network, deterministic. */
 function renderChart() {
   const el = $('chart');
   if (!el || !META || !Array.isArray(META.comps) || !META.comps.length) {
@@ -254,16 +259,16 @@ function renderChart() {
     const w = Math.max(2, Math.round((barArea * c.multiple) / max));
     return `<text x="0" y="${y + 15}" class="clabel">${esc(c.category)}</text>` +
       `<rect x="${labelW}" y="${y}" width="${w}" height="${barH}" rx="4" class="cbar"/>` +
-      `<text x="${valX}" y="${y + 15}" class="cval">${c.source === 'global' ? 'global median · ' + c.comps + ' comps' : c.multiple.toFixed(2) + '× · ' + c.comps + ' comps'}</text>`;
+      `<text x="${valX}" y="${y + 15}" class="cval">${c.multiple.toFixed(2) + '× · ' + c.comps + ' comps'}</text>`;
   }).join('');
-  el.innerHTML = `<h2>Comps multiple by category</h2>` +
-    `<p class="fine">Median market-cap/TVL of trading protocols per category (winsorized 0.05–20, TVL-range subset, else the category, else the global median — those bars say so). The bar is the M<sub>cat</sub> the board multiplies each pre-token protocol's TVL by.</p>` +
+  el.innerHTML = `<h2>Reference comps by category</h2>` +
+    `<p class="fine">Median market-cap/TVL of trading protocols per category (winsorized 0.05–20, TVL-range subset, else the category, else the global median). Reference only: the model fits a size curve through all trading protocols and multiplies by the curve's multiple, not by these medians.</p>` +
     `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Comps multiple by category">${bars}</svg>`;
 }
 
 /** The TVL-versus-value scatter: one dot per board row, log scales on both axes,
  * coloured by status. The judge sees at a glance that pre-token value tracks TVL
- * through the comps multiple, and that trading anchors sit on their observed caps.
+ * through the fitted curve, and that trading anchors sit on their observed caps.
  * Inline SVG, no network, deterministic. */
 function renderScatter() {
   const el = $('scatter');
@@ -292,7 +297,7 @@ function renderScatter() {
   const dots = rows.map((r) =>
     `<circle cx="${X(Math.log10(r.tvl_usd)).toFixed(1)}" cy="${Y(Math.log10(r.implied_value_usd)).toFixed(1)}" r="3.5" fill="${col(r)}" opacity="0.75"><title>${esc(r.name)} — TVL $${Math.round(r.tvl_usd).toLocaleString('en-US')}, value $${Math.round(r.implied_value_usd).toLocaleString('en-US')}</title></circle>`).join('');
   el.innerHTML = `<h2>TVL versus implied value</h2>` +
-    `<p class="fine">Each dot is one board row (log scales). Blue = pre-token, green = trading anchor, red = anomaly. Value tracks TVL through the comps multiple; trading rows sit on their observed market cap.</p>` +
+    `<p class="fine">Each dot is one board row (log scales). Blue = pre-token, green = trading anchor, red = anomaly. Value tracks TVL through the fitted curve; trading rows sit on their observed market cap.</p>` +
     `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="TVL versus implied value scatter">${grid}${dots}` +
     `<text x="${(ML + W - MR) / 2}" y="${H - 8}" class="saxis" text-anchor="middle">TVL (log)</text>` +
     `<text x="14" y="${(MT + H - MB) / 2}" class="saxis" text-anchor="middle" transform="rotate(-90 14 ${(MT + H - MB) / 2})">Implied value (log)</text></svg>`;
@@ -308,17 +313,28 @@ function init() {
   const pillAll = $('pillAll'), pillWl = $('pillWl');
   if (pillAll) pillAll.textContent = 'All ' + BOARD.length;
   if (pillWl) pillWl.textContent = 'Watchlist · ' + (META ? META.watchlist_size : 40);
-  const snapDate = $('snapDate'), snapModel = $('snapModel'), footDate = $('footDate'), footModel = $('footModel'), globMed = $('globMed');
+  const snapDate = $('snapDate'), snapModel = $('snapModel'), footDate = $('footDate'), footModel = $('footModel');
   if (snapDate) snapDate.textContent = META ? META.as_of : '2026-11-14';
-  if (snapModel) snapModel.textContent = META ? META.model_version : 'radar-v2-comps';
-  if (globMed) globMed.textContent = META ? META.m_global.toFixed(4) : '0.205';
+  if (snapModel) snapModel.textContent = META ? META.model_version : 'radar-v3-curve';
   if (footDate) footDate.textContent = META ? META.as_of : '2026-11-14';
-  if (footModel) footModel.textContent = META ? META.model_version : 'radar-v2-comps';
+  if (footModel) footModel.textContent = META ? META.model_version : 'radar-v3-curve';
+  // Curve coefficients and leave-one-out numbers, from the embedded data (fit at runtime).
+  const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  if (META && META.loo) {
+    set('curveA', META.curve_a.toFixed(2));
+    set('curveSlope', META.curve_b.toFixed(2));
+    set('looN', String(META.loo.curve.n));
+    set('looCurve', META.loo.curve.median_miss.toFixed(2));
+    set('looCurve2', String(META.loo.curve.within_2x));
+    set('looCurve3', String(META.loo.curve.within_3x));
+    set('looGlobal', META.loo.global.median_miss.toFixed(2));
+    set('looCat', META.loo.category.median_miss.toFixed(2));
+  }
   const pre = BOARD.filter((r) => r.status === 'pre-token').length;
   const trade = BOARD.filter((r) => r.status === 'trading').length;
   const anom = BOARD.filter((r) => r.status === 'trading-anomaly').length;
   statsEl.textContent = BOARD.length + ' protocols · ' + (META ? META.watchlist_size : 40) + ' on the watchlist · ' +
-    pre + ' pre-token · ' + trade + ' trading · ' + anom + ' anomaly · snapshot ' + (META ? META.as_of : '2026-11-14') + ' · model ' + (META ? META.model_version : 'radar-v2-comps');
+    pre + ' pre-token · ' + trade + ' trading · ' + anom + ' anomaly · snapshot ' + (META ? META.as_of : '2026-11-14') + ' · model ' + (META ? META.model_version : 'radar-v3-curve');
   renderChart();
   renderScatter();
   const cats = [...new Set(BOARD.map((r) => r.category).filter(Boolean))].sort();

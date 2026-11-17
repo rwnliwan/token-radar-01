@@ -27,7 +27,7 @@
 </section>
 
 <main>
-  <p class="fine" id="rankNote">Ranks are global board ranks; ranks 1–3 are trading anchors.</p>
+  <p class="fine" id="rankNote">Ranks are global board ranks; the first pre-token protocol is rank 15.</p>
   <table id="board">
     <thead>
       <tr>
@@ -47,7 +47,7 @@
   <p class="count" id="count"></p>
 </main>
 
-<section class="chart" id="chart" aria-label="Comps multiple by category"></section>
+<section class="chart" id="chart" aria-label="Reference comps multiple by category"></section>
 
 <section class="chart" id="scatter" aria-label="TVL versus implied value"></section>
 
@@ -57,19 +57,20 @@
   <h2>How this radar works</h2>
   <p><strong>Implied value</strong> = TVL × M<sub>cat</sub> × F<sub>growth</sub> × F<sub>age</sub> × F<sub>chain</sub> × P<sub>launch</sub>, for a protocol that records no token. A protocol whose token already trades is valued at its observed market cap instead, and marked as a trading anchor.</p>
   <ul>
-    <li><strong>M<sub>cat</sub></strong> — the comps multiple: the median market-cap/TVL of trading protocols in the same category and of similar size (TVL within 0.2×–5×), winsorized to 0.05–20, at least 5 comps, else the category median, else the global median (<span id="globMed">0.205</span>). No name is ever special-cased.</li>
+    <li><strong>M<sub>cat</sub></strong> — the comps multiple: the fitted size curve, log(market cap) = <span id="curveA">6.97</span> + <span id="curveSlope">0.52</span>·log(TVL), fit by least squares on the 128 trading protocols, so the multiple falls as TVL grows.</li>
     <li><strong>F<sub>growth</sub></strong> — seven-day TVL momentum, capped at −50% to +100%.</li>
     <li><strong>F<sub>age</sub></strong> — a hump: trust grows to 1.15 at two years without a token, then fades to 0.95; unknown age scores 0.90.</li>
     <li><strong>F<sub>chain</sub></strong> — 1.00 for one chain, 1.05 for two or three, 1.10 for four or more.</li>
     <li><strong>P<sub>launch</sub></strong> — a stated prior, not an observation: 0.65 for watchlist-eligible protocols, 0.50 for other pre-token ones.</li>
   </ul>
-  <p><strong>Known limits.</strong> P_launch is a stated prior; no launch outcomes were observed to calibrate it against. Most categories have fewer than five trading comps, so their rows use the global median (the comps chart marks those bars). Implied values are a relative ranking signal, not a price target.</p>
+  <p><strong>Leave-one-out.</strong> On the <span id="looN">128</span> trading tokens (multiple only, each predicted with itself removed): the curve misses by ×<span id="looCurve">3.40</span> (<span id="looCurve2">32</span>% within 2×, <span id="looCurve3">42</span>% within 3×), vs ×<span id="looGlobal">5.07</span> for the global median and ×<span id="looCat">4.86</span> for the category median. Internal consistency on traded tokens, not validation against launches.</p>
+  <p><strong>Known limits.</strong> P_launch is a stated prior; no launch outcomes were observed to calibrate it against. The curve is fit on tokens that already trade, so it cannot see launches that never happened. Implied values are a relative ranking signal, not a price target.</p>
   <p>Pre-token means all three token fields are null (market cap, CoinGecko id, symbol). The board holds 200 rows: the whole 40-protocol watchlist plus the 160 highest-valued others outside bridges, staked products and exchanges. Each row carries a farm plan with concrete costs and times, computed in-page from the board data.</p>
-  <p class="fine">Snapshot: DefiLlama protocols at or above $5,000,000 TVL, fetched <span id="snapDate">2026-11-14</span>. Model <span id="snapModel">radar-v2-comps</span>. The program runs twice and writes identical bytes; nothing here fetches the network.</p>
+  <p class="fine">Snapshot: DefiLlama protocols at or above $5,000,000 TVL, fetched <span id="snapDate">2026-11-14</span>. Model <span id="snapModel">radar-v3-curve</span>. The program runs twice and writes identical bytes; nothing here fetches the network.</p>
 </section>
 
 <footer>
-  <p>Token Launch Radar · model <span id="footModel">radar-v2-comps</span> · snapshot <span id="footDate">2026-11-14</span> · values are the entry's own claim, never a promise a token launches.</p>
+  <p>Token Launch Radar · model <span id="footModel">radar-v3-curve</span> · snapshot <span id="footDate">2026-11-14</span> · values are the entry's own claim, never a promise a token launches.</p>
 </footer>
 
 <script src="app.js"></script>
