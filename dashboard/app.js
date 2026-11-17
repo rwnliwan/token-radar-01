@@ -254,15 +254,16 @@ function renderChart() {
     .slice(0, 10);
   if (!rows.length) { el.innerHTML = '<p class="fine">No comps data.</p>'; return; }
   const max = rows[0].multiple;
-  const W = 760, barH = 22, gap = 6, labelW = 170, valX = 600;
+  const W = 860, barH = 22, gap = 6, labelW = 170, valX = 600;
   const H = rows.length * (barH + gap) + 8;
   const barArea = valX - labelW - 12;
   const bars = rows.map((c, i) => {
     const y = 8 + i * (barH + gap);
     const w = Math.max(2, Math.round((barArea * c.multiple) / max));
+    const fb = c.source === 'global';
     return `<text x="0" y="${y + 15}" class="clabel">${esc(c.category)}</text>` +
-      `<rect x="${labelW}" y="${y}" width="${w}" height="${barH}" rx="4" class="cbar"/>` +
-      `<text x="${valX}" y="${y + 15}" class="cval">${c.multiple.toFixed(2) + '× · ' + c.comps + ' comps'}</text>`;
+      `<rect x="${labelW}" y="${y}" width="${w}" height="${barH}" rx="4" class="cbar${fb ? ' cfb' : ''}"/>` +
+      `<text x="${valX}" y="${y + 15}" class="cval">${c.multiple.toFixed(2) + '× · ' + c.comps + ' comps' + (fb ? ' · global fallback' : '')}</text>`;
   }).join('');
   el.innerHTML = `<h2>Reference comps by category</h2>` +
     `<p class="fine">Median market-cap/TVL of trading protocols per category (winsorized 0.05–20, TVL-range subset, else the category, else the global median). Reference only: the model fits a size curve through all trading protocols and multiplies by the curve's multiple, not by these medians.</p>` +
@@ -331,13 +332,14 @@ function init() {
     set('looGlobal', META.loo.global.median_miss.toFixed(2));
     set('looCat', META.loo.category.median_miss.toFixed(2));
   }
-  const wf = META && META.walkforward && META.walkforward.length ? META.walkforward.map((w) => '×' + w[1].toFixed(2) + ' vs ×' + w[2].toFixed(2) + ' (n=' + w[0] + ')').join('; ') : '';
+  const wf = META && META.walkforward && META.walkforward.length ? '×' + META.walkforward.map((w) => w[1].toFixed(2)).join('/×') + ' vs ×' + META.walkforward.map((w) => w[2].toFixed(2)).join('/×') : '';
+  const loo = META && META.loo ? ' · LOO ×' + META.loo.curve.median_miss.toFixed(2) + ' vs ×' + META.loo.global.median_miss.toFixed(2) : '';
   if (wf) set('wf', wf);
   const pre = BOARD.filter((r) => r.status === 'pre-token').length;
   const trade = BOARD.filter((r) => r.status === 'trading').length;
   const anom = BOARD.filter((r) => r.status === 'trading-anomaly').length;
   statsEl.textContent = BOARD.length + ' protocols · ' + (META ? META.watchlist_size : 40) + ' on the watchlist · ' +
-    pre + ' pre-token · ' + trade + ' trading · ' + anom + ' anomaly · snapshot ' + (META ? META.as_of : '2026-11-14') + ' · model ' + (META ? META.model_version : 'radar-v3-curve') + (wf ? ' · walk-forward curve vs flat median: ' + wf : '');
+    pre + ' pre-token · ' + trade + ' trading · ' + anom + ' anomaly · snapshot ' + (META ? META.as_of : '2026-11-14') + ' · model ' + (META ? META.model_version : 'radar-v3-curve') + (wf ? ' · curve beats flat on all 3 splits: ' + wf + ' (median miss, lower = better)' + loo : '');
   renderChart();
   renderScatter();
   const cats = [...new Set(BOARD.map((r) => r.category).filter(Boolean))].sort();
