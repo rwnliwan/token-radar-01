@@ -65,6 +65,17 @@ td .slug { color: var(--muted); font-size: 12px; display: block; }
 .badge.anom { background: #4a3413; color: var(--warn); }
 .badge.wl { background: transparent; color: var(--warn); border: 1px solid var(--warn); margin-left: 6px; }
 .count { color: var(--muted); font-size: 13px; }
+.chip {
+  display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line); margin-right: 4px;
+}
+.chart { max-width: 1180px; margin: 14px auto 4px; padding: 0 24px; }
+.chart h2 { font-size: 16px; margin: 0 0 2px; }
+.chart .fine { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+.chart svg { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; }
+.chart .clabel { fill: var(--ink); font-size: 12px; }
+.chart .cval { fill: var(--muted); font-size: 12px; }
+.chart .cbar { fill: var(--accent); opacity: .85; }
 #detail {
   position: fixed; inset: 0; z-index: 20; margin: 0; padding: 24px;
   background: rgba(5, 9, 12, .82); display: flex; align-items: flex-start; justify-content: center;

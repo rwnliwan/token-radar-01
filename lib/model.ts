@@ -305,8 +305,13 @@ export function scoreProtocol(
   pool: SnapshotProtocol[],
   mGlobal: number,
   floorUsd: number,
+  asOf: string,
 ): ScoredValue {
-  const age = ageDays(REF_DATE, p.listed_at);
+  // Ages are measured against the snapshot's own as_of, not a hardcoded date: a
+  // hardcoded REF_DATE goes stale the moment the snapshot is refreshed, and every
+  // age on the board reads old by the gap (the kit snapshot is as_of 2026-11-14
+  // while REF_DATE was 2026-11-16, so every age read 2 days too old).
+  const age = ageDays(asOf, p.listed_at);
   const growth = growthMultiplier(p.change_7d);
   const ageMult = ageMultiplier(age);
   const chainMult = chainMultiplier(p.chains);
@@ -597,7 +602,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const pool = tradingPool(snapshot.protocols);
   const mGlobal = median(pool.map((p) => winsorize(p.mcap_usd! / p.tvl_usd)));
   const scored = new Map<string, ScoredValue>();
-  for (const p of snapshot.protocols) scored.set(p.slug, scoreProtocol(p, pool, mGlobal, snapshot.floor_usd));
+  for (const p of snapshot.protocols) scored.set(p.slug, scoreProtocol(p, pool, mGlobal, snapshot.floor_usd, snapshot.as_of));
 
   const index = bySlug(snapshot.protocols);
   const watchlistRows: SnapshotProtocol[] = [];
@@ -722,7 +727,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     source: 'DefiLlama',
     floor_usd: snapshot.floor_usd,
     model_version: MODEL_VERSION,
-    ref_date: REF_DATE,
+    ref_date: snapshot.as_of,
     m_global: round4(mGlobal),
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,

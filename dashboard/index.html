@@ -19,8 +19,8 @@
   <select id="cat" aria-label="Filter by category"><option value="">All categories</option></select>
   <select id="chain" aria-label="Filter by chain"><option value="">All chains</option></select>
   <div class="pills" role="group" aria-label="Status filter">
-    <button data-f="all" class="on" type="button">All 200</button>
-    <button data-f="pre-token" type="button">Pre-token</button>
+    <button data-f="all" type="button">All 200</button>
+    <button data-f="pre-token" class="on" type="button">Pre-token</button>
     <button data-f="trading" type="button">Trading anchors</button>
     <button data-f="watchlist" type="button">Watchlist · 40</button>
   </div>
@@ -45,6 +45,8 @@
   </table>
   <p class="count" id="count"></p>
 </main>
+
+<section class="chart" id="chart" aria-label="Comps multiple by category"></section>
 
 <aside id="detail" hidden aria-label="Protocol detail"></aside>
 
