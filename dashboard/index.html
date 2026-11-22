@@ -10,7 +10,7 @@
 <header class="top">
   <div class="brand"><span class="dot" aria-hidden="true"></span> TOKEN LAUNCH RADAR</div>
   <h1>Which pre-token protocol is worth farming next?</h1>
-  <p class="sub">Every protocol DefiLlama tracks, ranked by what its token would be worth if it launched today — valued against protocols whose token already trades. A protocol <em>records no token</em> until its record says otherwise; this board never claims one has none.</p>
+  <p class="sub">Every protocol DefiLlama tracks, ranked by what its token would be worth if it launched today — valued against protocols whose token already trades. A protocol records no token until its record says otherwise.</p>
   <p class="stats" id="stats">Loading the board…</p>
 </header>
 
@@ -19,11 +19,35 @@
   <select id="cat" aria-label="Filter by category"><option value="">All categories</option></select>
   <select id="chain" aria-label="Filter by chain"><option value="">All chains</option></select>
   <div class="pills" role="group" aria-label="Status filter">
-    <button data-f="all" id="pillAll" type="button">All 200</button>
+    <button data-f="all" id="pillAll" type="button">All 260</button>
     <button data-f="pre-token" class="on" type="button">Pre-token</button>
     <button data-f="trading" type="button">Trading anchors</button>
     <button data-f="watchlist" id="pillWl" type="button">Watchlist · 40</button>
+    <button data-f="early" id="pillEarly" type="button">Early finds</button>
   </div>
+  <label class="share">Airdrop share <input id="share" type="range" min="5" max="15" step="1" value="10" aria-label="Farmer airdrop share"> <b id="shareVal">10%</b></label>
+</section>
+
+<section class="chart" id="scatter" aria-label="TVL versus implied value"></section>
+
+<section class="farmnext" aria-label="Farm next queue">
+  <div class="fn-head">
+    <div>
+      <h2>Farm next</h2>
+      <p class="fine">The ten pre-token rows with the best net per hour, at the deposit below. Net is the pro-rata reward at the farmer allocation (slider above, default 10%), minus gas, fees and the 4% forgone yield — recomputed in the page.</p>
+    </div>
+    <div class="dep" role="group" aria-label="Deposit size">
+      <button data-dep="1000" class="on" type="button">$1,000</button>
+      <button data-dep="10000" type="button">$10,000</button>
+      <button data-dep="100000" type="button">$100,000</button>
+    </div>
+  </div>
+  <table id="queue">
+    <thead>
+      <tr><th>#</th><th>Protocol</th><th>Implied value</th><th>Net</th><th>Pays after</th><th>Net / hour</th><th>Verdict</th></tr>
+    </thead>
+    <tbody id="queueRows"></tbody>
+  </table>
 </section>
 
 <main>
@@ -39,6 +63,7 @@
         <th data-k="change_7d">7d</th>
         <th data-k="implied_value_usd">Implied value</th>
         <th data-k="age_days">Age</th>
+        <th data-k="grade">Grade</th>
         <th data-k="status">Status</th>
       </tr>
     </thead>
@@ -47,32 +72,34 @@
   <p class="count" id="count"></p>
 </main>
 
-<section class="chart" id="chart" aria-label="Reference comps multiple by category"></section>
-
-<section class="chart" id="scatter" aria-label="TVL versus implied value"></section>
-
 <aside id="detail" hidden aria-label="Protocol detail"></aside>
 
 <section class="method" aria-label="How this radar works">
   <h2>How this radar works</h2>
-  <p><strong>Implied value</strong> = TVL × M<sub>cat</sub> × F<sub>growth</sub> × F<sub>age</sub> × F<sub>chain</sub> × P<sub>launch</sub>, for a protocol that records no token. A protocol whose token already trades is valued at its observed market cap instead, and marked as a trading anchor.</p>
+  <p><strong>Implied value</strong> = TVL × M<sub>cat</sub> × F<sub>growth</sub> × F<sub>age</sub> × F<sub>chain</sub> × P<sub>launch</sub>, for a protocol that records no token. One whose token already trades is valued at its observed market cap, and marked as a trading anchor.</p>
   <ul>
-    <li><strong>M<sub>cat</sub></strong> — the comps multiple: the fitted size curve, log(market cap) = <span id="curveA">6.97</span> + <span id="curveSlope">0.52</span>·log(TVL), fit by least squares on the 128 trading protocols, so the multiple falls as TVL grows.</li>
-    <li><strong>F<sub>growth</sub></strong> — seven-day TVL momentum, capped at −50% to +100%.</li>
-    <li><strong>F<sub>age</sub></strong> — a hump: trust grows to 1.15 at two years without a token, then fades to 0.95; unknown age scores 0.90.</li>
+    <li><strong>M<sub>cat</sub></strong> — the comps multiple: the fitted size curve, log(market cap) = <span id="curveA">6.96</span> + <span id="curveSlope">0.52</span>·log(TVL), least squares on the 128 trading protocols, so the multiple falls as TVL grows. Top comps: <span id="compsLine">Dexs ×0.34 (9), Yield ×0.19 (9), Lending ×0.15 (8), Basis Trading ×0.65 (7), RWA ×0.20 (7)</span>.</li>
+    <li><strong>F<sub>growth</sub></strong> — 7-day TVL momentum, capped at −50% to +100%.</li>
+    <li><strong>F<sub>age</sub></strong> — a hump: 1.15 at two years without a token, fading to 0.95; unknown age 0.90.</li>
     <li><strong>F<sub>chain</sub></strong> — 1.00 for one chain, 1.05 for two or three, 1.10 for four or more.</li>
-    <li><strong>P<sub>launch</sub></strong> — a stated prior, not an observation: 0.65 for watchlist-eligible protocols, 0.50 for other pre-token ones.</li>
+    <li><strong>P<sub>launch</sub></strong> — a stated prior, not an observation: 0.65 watchlist-eligible, 0.50 other pre-token.</li>
   </ul>
-  <p><strong>Leave-one-out.</strong> On the <span id="looN">128</span> trading tokens (multiple only, each predicted with itself removed): the curve's median miss is ×<span id="looCurve">3.40</span> (<span id="looCurve2">32</span>% within 2×, <span id="looCurve3">42</span>% within 3×), vs ×<span id="looGlobal">5.07</span> for the global median and ×<span id="looCat">4.86</span> for the category median. Internal consistency on traded tokens, not validation against launches.</p>
-  <p><strong>Walk-forward.</strong> Fit on the older 50%, 60% and 70% of listed tokens and test on the newer rest (curve vs global median): <span id="wf">×3.01 vs ×5.29 (n=48); ×2.88 vs ×5.25 (n=38); ×3.41 vs ×5.29 (n=29)</span>. The curve beats the flat median on newer tokens at every cutoff. Internal consistency on traded tokens, not validation against launches.</p>
-  <p><strong>Known limits.</strong> P_launch is a stated prior; no launch outcomes were observed to calibrate it against. The curve is fit on tokens that already trade, so it cannot see launches that never happened. Implied values are a relative ranking signal, not a price target.</p>
-  <p><strong>Negative results.</strong> A time-weighted dollar-days share (capital × days held, TVL grown at the observed 7-day rate) was tested against the plain pro-rata share: the median net ratio is 1.00 and no row changes sign, so the plan keeps the simpler pro-rata share. Farming all 40 watchlist protocols at the plan capitals costs $4,100 of capital and $1,318 of fees for about $30 of expected reward at implied values — the book loses about $1,288 even if all 40 launch at their implied values, so no book-level break-even exists at these sizes.</p>
-  <p>Pre-token means all three token fields are null (market cap, CoinGecko id, symbol). The board holds 200 rows: the whole 40-protocol watchlist plus the 160 highest-valued others outside bridges, staked products and exchanges. Each row carries a farm plan with concrete costs and times, computed in-page from the board data.</p>
-  <p class="fine">Snapshot: DefiLlama protocols at or above $5,000,000 TVL, fetched <span id="snapDate">2026-11-14</span>. Model <span id="snapModel">radar-v3-curve</span>. The program runs twice and writes identical bytes; nothing here fetches the network.</p>
+  <p><strong>Leave-one-out.</strong> On the <span id="looN">128</span> trading tokens (multiple only, each predicted with itself removed): the curve's median miss is ×<span id="looCurve">3.40</span> (<span id="looCurve2">32</span>% within 2×, <span id="looCurve3">42</span>% within 3×), vs ×<span id="looGlobal">5.07</span> for the global median and ×<span id="looCat">4.86</span> for the category median. Internal consistency, not validation against launches.</p>
+  <p><strong>Walk-forward.</strong> Fit on the older 50%, 60% and 70% of listed tokens, test on the newer rest (curve vs global median): <span id="wf">×3.01/×2.88/×3.41 vs ×5.29/×5.25/×5.29 (n=48, 38, 29)</span>. The curve beats the flat median on newer tokens at every cutoff.</p>
+  <p><strong>Stepwise.</strong> Five ways to predict a trading token's market cap, scored by leave-one-out (median miss, share within 3×, Spearman): <span id="stepLine">M0 global median ×5.07, 35%, 0.42; M1 category median ×4.86, 30%, 0.38; M2 size curve (OLS) ×3.40, 42%, 0.40; M3 curve × growth × age × chain ×3.43, 43%, 0.39; M4 size curve (Huber) ×3.51, 42%, 0.41</span>.</p>
+  <p>The curve wins on median miss; the extra factors in M3 do not improve it, and the robust Huber fit (M4, slope <span id="huberB">0.55</span> vs OLS <span id="olsB">0.52</span>, median miss ×<span id="huberMiss">3.51</span>) does not beat plain least squares either. The flat median ranks slightly better (Spearman 0.42 vs 0.40) but misses further on size — the curve is kept because it prices size, not because it wins every column.</p>
+  <p><strong>Stability.</strong> The trading pool is split into five folds by slug order, the curve refit on each four-fifths; the top 20 pre-token rows keep <span id="stabFolds">20/20/20/20/20</span> of their members under every refit (median overlap <span id="stabMed">20</span>, worst <span id="stabMin">20</span>)<span id="stabDropped"></span>. The ranking's head does not depend on which fifth is held out. Each row's rank range under those refits (plus the Huber fit) is shown under its rank.</p>
+  <p><strong>Negative results.</strong> A second size term (log TVL squared) was fit and scored by leave-one-out: median miss ×<span id="quadMiss">3.38</span> vs ×<span id="looCurveQ">3.40</span> for the straight line — a gain of <span id="quadDelta">0.02</span>, nothing meaningful, so the model keeps the straight line. A time-weighted dollar-days share (capital × days held, TVL grown at the observed 7-day rate) was also tested against the plain pro-rata share: the median net ratio is 1.00 and no row changes sign, so the plan keeps the simpler pro-rata share.</p>
+  <p><strong>Farm economics.</strong> Every plan's net is the pro-rata reward at the farmer allocation (slider above, default 10%, 5–15%), minus gas, fees and the forgone yield (a stated 4% annual benchmark over the hold). “Pays after N days” assumes the reward accrues linearly over the hold; costs accrue $2 a week plus the forgone yield daily. Verdict: Robust when the low-end net (implied value divided by the curve's median miss) is positive at that deposit, Thin when only the implied-value net is, Skip otherwise — move the deposit toggle or the slider to see it move. Farming all 40 watchlist protocols at the plan capitals costs <span id="bookCap">$4,100</span> of capital and <span id="bookFees">$1,335</span> of fees and forgone yield for about <span id="bookReward">$30</span> of expected reward — the book loses about <span id="bookNet">$1,305</span> even if all 40 launch at their implied values, so no book-level break-even exists at these sizes.</p>
+  <p><strong>Confidence grade.</strong> Each row scores /100: 40 base + 15 watchlist + up to 10 age (10 at ≥1 year, 5 at 180–364 days) + 10 positive seven-day growth + up to 10 size (10 at TVL ≥$100M, 5 at $50–100M) + 15 when the low-end $10,000 net is positive, or 15 for a trading anchor (value observed, not modelled). A ≥80, B ≥60, else C. On this board: <span id="gradeCounts">8 A · 122 B · 130 C</span>.</p>
+  <p><strong>Early finds.</strong> A pre-token protocol, not on the watchlist, that is young (under 180 days) or moving fast (seven-day TVL above +20%): <span id="earlyCount">48</span> rows on this board. They are the launch candidates the watchlist has not caught yet — and the ones with the least history, so read their grades with the rest of the row.</p>
+  <p><strong>Known limits.</strong> P_launch is a stated prior, never calibrated against launches. Implied values are a relative ranking signal, not a price target.</p>
+  <p>The board holds 260 rows: the whole 40-protocol watchlist, the 36 highest-valued trading anchors outside bridges, staked products and exchanges, every pre-token protocol outside those categories (174), and the 10 trading-anomaly protocols outside them — 214 pre-token rows in all. The 498 left off are counted by reason: <span id="exNoValue">258</span> record a symbol but no observable value, <span id="exCat">172</span> sit in an excluded category, <span id="exCut">68</span> are trading protocols below the anchor cut<span id="exNote"></span>. Each row carries a farm plan with concrete costs and times, computed in-page from the board data.</p>
+  <p class="fine">Snapshot: DefiLlama protocols at or above $5,000,000 TVL, fetched <span id="snapDate">2026-11-14</span>. Model <span id="snapModel">radar-v4-curve</span>. The program runs twice and writes identical bytes; nothing here fetches the network.</p>
 </section>
 
 <footer>
-  <p>Token Launch Radar · model <span id="footModel">radar-v3-curve</span> · snapshot <span id="footDate">2026-11-14</span> · values are the entry's own claim, never a promise a token launches.</p>
+  <p>Token Launch Radar · model <span id="footModel">radar-v4-curve</span> · snapshot <span id="footDate">2026-11-14</span> · values are the entry's own claim, never a promise a token launches.</p>
 </footer>
 
 <script src="app.js"></script>

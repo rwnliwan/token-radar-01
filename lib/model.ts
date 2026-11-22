@@ -9,9 +9,14 @@
 //   implied_value_usd = round(tvl_usd x M_cat x F_growth x F_age x F_chain x P_launch)
 //
 // for a protocol that records no token, and the observed market cap for one whose token
-// already trades. The board ranks 200 protocols: the snapshot's 40-protocol watchlist
-// (the floor, never the ceiling) plus the 160 highest-valued others outside the six
-// categories that can never be a launch candidate (bridges, staked products, exchanges).
+// already trades. The board ranks 260 protocols: the snapshot's 40-protocol watchlist
+// (the floor, never the ceiling) plus 220 more — the 36 highest-valued trading anchors
+// outside the six categories that can never be a launch candidate (bridges, staked
+// products, exchanges), every pre-token protocol outside those categories (174), and
+// the 10 trading-anomaly protocols outside them. 214 of the 260 rows are pre-token.
+// Every protocol left off the board is counted by reason (no observable value, excluded
+// category, below the anchor cut) and the counts are published in the dashboard, so the
+// board's coverage is auditable instead of asserted.
 //
 // The constants are stated here and in the dashboard, so the judge can audit them.
 
@@ -39,7 +44,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it and the dossier quotes it. */
-export const MODEL_VERSION = 'radar-v3-curve';
+export const MODEL_VERSION = 'radar-v4-curve';
 
 /** The reference date for ages: the snapshot's context date, fixed so two runs agree. */
 export const REF_DATE = '2026-11-16';
@@ -49,8 +54,17 @@ export const VALUE_FLOOR = 1_000;
 export const VALUE_CAP = 10_000_000_000;
 
 /** How many rows the board holds: the whole watchlist plus this many more. */
-export const BOARD_ROWS = 200;
-export const FILLER_ROWS = 160;
+export const BOARD_ROWS = 260;
+export const FILLER_ROWS = 220;
+
+/** Trading anchors on the board: the highest-valued trading protocols outside the excluded categories. */
+export const ANCHOR_ROWS = 36;
+
+/** The forgone-yield benchmark for farm economics: a stated 4% annual rate on the deposit. */
+export const FORGONE_YIELD_RATE = 0.04;
+
+/** The farmer allocation assumed in every farm plan's expected reward: stated, not observed. */
+export const FARMER_ALLOCATION = 0.1;
 
 /** Categories that can never be a launch candidate (the watchlist's own rule). */
 export const EXCLUDED_CATEGORIES = new Set([
@@ -95,6 +109,13 @@ export interface BoardRow {
   watchlist: boolean;
   age_days: number | null;
   implied_value_usd: number;
+  /** Confidence grade (A/B/C) and its /100 score, from the row's own fields (see computeGrade). */
+  grade: 'A' | 'B' | 'C';
+  grade_score: number;
+  /** Rank range under model refits: the lowest and highest rank this row takes across
+   * the full fit, the five stability folds and the Huber fit (see computeRankRanges). */
+  rank_lo: number;
+  rank_hi: number;
   model: {
     m_cat: number;
     m_cat_source: 'range' | 'category' | 'global' | 'observed' | 'curve';
@@ -108,11 +129,20 @@ export interface BoardRow {
 
 /**
  * The dashboard's compact view of one row (embedded in the page, no fetch needed).
- * A positional array, not an object: the key names of 200 objects would cost ~50 KB
+ * A positional array, not an object: the key names of 260 objects would cost ~65 KB
  * and push the dashboard's source past the dossier's 64 KiB text cap. Positions:
  * [rank, slug, name, category, chains, tvl, change_7d, age_days, value, status,
- *  watchlist, m_cat, f_growth, f_age, f_chain, p_launch]. Status is one letter:
- * 'p' pre-token, 't' trading, 'a' trading-anomaly. Watchlist is 1 or 0.
+ *  watchlist, grade, grade_score, rank_lo_off, rank_hi_off]. Status is one letter: 'p' pre-token, 't' trading,
+ * 'a' trading-anomaly. Watchlist is 1 or 0. Grade is the confidence grade A/B/C with
+ * its /100 score. rank_lo_off / rank_hi_off are the row's rank range under model
+ * refits as offsets from its rank (lo = rank - lo_off, hi = rank + hi_off; see
+ * computeRankRanges) — offsets, not absolute ranks, because they are 1-2 digits
+ * and save ~800 bytes of embedded text against absolute ranks. The five value
+ * factors (m_cat, f_growth, f_age, f_chain, p_launch) are NOT embedded: the page
+ * recomputes them from these fields and the curve with the same formulas as the
+ * model (see the dashboard's factor functions), which saves about 7 KB of embedded
+ * text and keeps the whole page inside the dossier's text cap. The authoritative
+ * factors stay on every board.json row under `model`.
  */
 export type RadarRow = [
   number,
@@ -126,11 +156,10 @@ export type RadarRow = [
   number,
   'p' | 't' | 'a',
   0 | 1,
+  'A' | 'B' | 'C',
   number,
   number,
   number,
-  number,
-  number | null,
 ];
 
 /** One category's comps, for the dossier's audit table. */
@@ -157,6 +186,51 @@ export interface LooResults {
   slope: number;
 }
 
+/** One method's leave-one-out score with its rank correlation against observed values. */
+export interface StepwiseRow {
+  method: string;
+  median_miss: number;
+  within_3x: number;
+  spearman: number;
+}
+
+/** The stepwise model comparison: five methods, each scored by LOO on the trading pool. */
+export interface StepwiseResults {
+  rows: StepwiseRow[];
+}
+
+/** Top-20 stability under refit: five deterministic folds, in slug order, no randomness. */
+export interface StabilityResults {
+  folds: number[];
+  median_overlap: number;
+  min_overlap: number;
+  dropped: string[];
+}
+
+/** The robust (Huber) curve fit and its LOO score, next to the OLS curve. */
+export interface HuberResults {
+  a: number;
+  b: number;
+  median_miss: number;
+  within_3x: number;
+}
+
+/** The quadratic-curve negative test: a second size term, fit and scored by LOO. */
+export interface QuadraticResults {
+  median_miss: number;
+  within_3x: number;
+  beats_linear: boolean;
+}
+
+/** Protocols left off the board, counted by reason, with example slugs per reason. */
+export interface ExclusionCounts {
+  no_observable_value: number;
+  excluded_category: number;
+  trading_below_anchor_cut: number;
+  not_selected: number;
+  examples: { reason: string; slugs: string[] }[];
+}
+
 /** The fitted size curve: log(mcap) = a + b * log(tvl), fit on the trading pool. */
 export interface CurveFit {
   a: number;
@@ -177,6 +251,16 @@ export interface RadarData {
   loo: LooResults;
   /** Walk-forward splits: [test-set size, curve median miss, global-median miss]. */
   walkforward: [number, number, number][];
+  /** Stepwise model comparison: LOO median miss, within-3x and Spearman per method. */
+  stepwise: StepwiseResults;
+  /** Top-20 stability under five deterministic refits (overlap counts, 0..20). */
+  stability: StabilityResults;
+  /** Huber robust curve fit and its LOO score. */
+  huber: HuberResults;
+  /** Quadratic size term, tested and reported even when it loses. */
+  quadratic: QuadraticResults;
+  /** Protocols left off the board, counted by reason. */
+  excluded: ExclusionCounts;
   watchlist_size: number;
   board_size: number;
   rows: RadarRow[];
@@ -404,6 +488,300 @@ export function computeWalkForward(pool: SnapshotProtocol[]): [number, number, n
   return out;
 }
 
+/** Ranks with average ranks for ties (1-based). */
+function ranks(values: number[]): number[] {
+  const order = values.map((v, i) => [v, i] as [number, number]).sort((a, b) => a[0] - b[0]);
+  const r = new Array<number>(values.length);
+  let i = 0;
+  while (i < order.length) {
+    let j = i;
+    while (j + 1 < order.length && order[j + 1]![0] === order[i]![0]) j++;
+    const avg = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) r[order[k]![1]] = avg;
+    i = j + 1;
+  }
+  return r;
+}
+
+/** Spearman rank correlation between predictions and observations, rounded to 2dp. */
+export function spearman(xs: number[], ys: number[]): number {
+  const n = xs.length;
+  if (n < 3 || n !== ys.length) return 0;
+  const rx = ranks(xs);
+  const ry = ranks(ys);
+  const mx = rx.reduce((s, v) => s + v, 0) / n;
+  const my = ry.reduce((s, v) => s + v, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (rx[i]! - mx) * (ry[i]! - my);
+    sxx += (rx[i]! - mx) * (rx[i]! - mx);
+    syy += (ry[i]! - my) * (ry[i]! - my);
+  }
+  if (sxx === 0 || syy === 0) return 0;
+  return Math.round((sxy / Math.sqrt(sxx * syy)) * 100) / 100;
+}
+
+/**
+ * The robust size curve: the same log-log fit, but with Huber weights (IRLS, k = 1.345
+ * on a MAD scale), so a few giant outliers cannot drag the slope. Deterministic:
+ * fixed 20 iterations from the OLS start, no randomness. With fewer than 2 comps the
+ * fit is undefined and the curve is flat at 1x, like the OLS fit.
+ */
+export function huberCurveFit(pool: SnapshotProtocol[]): CurveFit {
+  const pts = pool.filter((p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  const n = pts.length;
+  if (n < 2) return { a: 0, b: 0, n };
+  const xs = pts.map((p) => Math.log(p.tvl_usd));
+  const ys = pts.map((p) => Math.log(p.mcap_usd!));
+  let { a, b } = fitCurve(pool);
+  const K = 1.345;
+  for (let iter = 0; iter < 20; iter++) {
+    const resid = xs.map((x, i) => ys[i]! - (a + b * x));
+    const medR = median(resid);
+    const mad = median(resid.map((r) => Math.abs(r - medR)));
+    const scale = Math.max(0.05, 1.4826 * mad);
+    const w = resid.map((r) => Math.min(1, (K * scale) / Math.max(Math.abs(r), 1e-12)));
+    let sw = 0;
+    let swx = 0;
+    let swy = 0;
+    let swxx = 0;
+    let swxy = 0;
+    for (let i = 0; i < n; i++) {
+      const wi = w[i]!;
+      sw += wi;
+      swx += wi * xs[i]!;
+      swy += wi * ys[i]!;
+      swxx += wi * xs[i]! * xs[i]!;
+      swxy += wi * xs[i]! * ys[i]!;
+    }
+    const den = sw * swxx - swx * swx;
+    if (den === 0) break;
+    const b2 = (sw * swxy - swx * swy) / den;
+    const a2 = (swy - b2 * swx) / sw;
+    if (Math.abs(b2 - b) < 1e-9 && Math.abs(a2 - a) < 1e-9) {
+      a = a2;
+      b = b2;
+      break;
+    }
+    a = a2;
+    b = b2;
+  }
+  return { a, b, n };
+}
+
+/**
+ * The stepwise model comparison: five ways to predict a trading token's market cap
+ * from the snapshot, each scored by leave-one-out on the trading pool — median miss,
+ * share within 3x, and Spearman rank correlation against the observed caps. M3 adds
+ * the growth, age and chain factors to the curve (no launch probability: a traded
+ * token already launched). The table is computed at runtime from the sealed snapshot
+ * and reported as-is, including when a fancier method loses to a simpler one.
+ */
+export function computeStepwise(pool: SnapshotProtocol[], asOf: string): StepwiseResults {
+  const n = pool.length;
+  const gPreds: number[] = [];
+  const cPreds: number[] = [];
+  const vPreds: number[] = [];
+  const fPreds: number[] = [];
+  const hPreds: number[] = [];
+  const obss: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const q = pool[i]!;
+    const others = pool.filter((_, j) => j !== i);
+    const mG = median(others.map((p) => winsorize(p.mcap_usd! / p.tvl_usd)));
+    gPreds.push(q.tvl_usd * mG);
+    const { multiple } = compsMultiple(q, others, mG);
+    cPreds.push(q.tvl_usd * multiple);
+    const fit = fitCurve(others);
+    const curvePred = Math.exp(fit.a + fit.b * Math.log(q.tvl_usd));
+    vPreds.push(curvePred);
+    fPreds.push(
+      curvePred *
+        growthMultiplier(q.change_7d) *
+        ageMultiplier(ageDays(asOf, q.listed_at)) *
+        chainMultiplier(q.chains),
+    );
+    const hfit = huberCurveFit(others);
+    hPreds.push(Math.exp(hfit.a + hfit.b * Math.log(q.tvl_usd)));
+    obss.push(q.mcap_usd!);
+  }
+  const row = (method: string, preds: number[]): StepwiseRow => {
+    const s = missStats(preds, obss);
+    return { method, median_miss: s.median_miss, within_3x: s.within_3x, spearman: spearman(preds, obss) };
+  };
+  return {
+    rows: [
+      row('M0 global median', gPreds),
+      row('M1 category median', cPreds),
+      row('M2 size curve (OLS)', vPreds),
+      row('M3 curve × growth × age × chain', fPreds),
+      row('M4 size curve (Huber)', hPreds),
+    ],
+  };
+}
+
+/**
+ * Top-20 stability: the trading pool is split into five deterministic folds by slug
+ * order (no randomness), the curve is refit on each four-fifths, every pre-token
+ * protocol is re-scored with the refit, and the new top 20 is compared with the
+ * full-fit top 20. A stable ranking keeps most of its top 20 under every refit.
+ * `dropped` names the full-fit top-20 slugs that fall out of the top 20 in any fold.
+ */
+export function computeStability(
+  snapshot: Snapshot,
+  pool: SnapshotProtocol[],
+  fullTop20: string[],
+): StabilityResults {
+  const ordered = [...pool].sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+  const pre = snapshot.protocols.filter((p) => isPreToken(p));
+  const folds: number[] = [];
+  const dropped = new Set<string>();
+  for (let f = 0; f < 5; f++) {
+    const lo = Math.floor((f * ordered.length) / 5);
+    const hi = Math.floor(((f + 1) * ordered.length) / 5);
+    const held = new Set(ordered.slice(lo, hi).map((p) => p.slug));
+    const rest = pool.filter((p) => !held.has(p.slug));
+    const fit = fitCurve(rest);
+    const mG = median(rest.map((p) => winsorize(p.mcap_usd! / p.tvl_usd)));
+    const rescored = pre
+      .map((p) => ({ slug: p.slug, value: scoreProtocol(p, rest, mG, snapshot.floor_usd, snapshot.as_of, fit).value }))
+      .sort((a, b) => b.value - a.value || (a.slug < b.slug ? -1 : 1))
+      .slice(0, 20)
+      .map((r) => r.slug);
+    const top = new Set(rescored);
+    folds.push(fullTop20.filter((s) => top.has(s)).length);
+    for (const s of fullTop20) if (!top.has(s)) dropped.add(s);
+  }
+  const sorted = [...folds].sort((a, b) => a - b);
+  return {
+    folds,
+    median_overlap: sorted[2]!,
+    min_overlap: sorted[0]!,
+    dropped: [...dropped].sort().slice(0, 8),
+  };
+}
+
+/**
+ * Per-row rank range under model refits: the full fit plus the five deterministic
+ * folds (the same slug-order splits as computeStability) plus the Huber robust fit.
+ * Each variant re-scores the board's protocols with its own curve and the rows are
+ * re-ranked; a row's range is the lowest and highest rank it takes across all
+ * seven rankings, including its board rank. Deterministic, no randomness: a trading
+ * row keeps its observed market cap in every variant, so its rank moves only because
+ * the modelled rows move around it. A narrow range means the rank is stable under
+ * refit; a wide one means the row's position depends on which fifth of the comps
+ * the curve was fit on.
+ */
+export function computeRankRanges(
+  snapshot: Snapshot,
+  pool: SnapshotProtocol[],
+  fit: CurveFit,
+  mGlobal: number,
+  board: BoardRow[],
+): Map<string, [number, number]> {
+  const index = bySlug(snapshot.protocols);
+  const protos = board.map((r) => index.get(r.slug)!).filter((p) => p !== undefined);
+  const ordered = [...pool].sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+  const variants: CurveFit[] = [];
+  for (let f = 0; f < 5; f++) {
+    const lo = Math.floor((f * ordered.length) / 5);
+    const hi = Math.floor(((f + 1) * ordered.length) / 5);
+    const held = new Set(ordered.slice(lo, hi).map((p) => p.slug));
+    variants.push(fitCurve(pool.filter((p) => !held.has(p.slug))));
+  }
+  variants.push(huberCurveFit(pool));
+  const ranks = new Map<string, number[]>();
+  for (const row of board) ranks.set(row.slug, [row.rank]);
+  for (const vfit of variants) {
+    const scored = protos.map((p) => ({
+      p,
+      value: scoreProtocol(p, pool, mGlobal, snapshot.floor_usd, snapshot.as_of, vfit).value,
+    }));
+    scored.sort(compareScored);
+    scored.forEach((s, i) => ranks.get(s.p.slug)!.push(i + 1));
+  }
+  const out = new Map<string, [number, number]>();
+  for (const [slug, rs] of ranks) out.set(slug, [Math.min(...rs), Math.max(...rs)]);
+  return out;
+}
+
+/** Solve a 3x3 linear system by Gaussian elimination; null when singular. */
+function solve3(a: number[][], b: number[]): number[] | null {
+  const m = a.map((row, i) => [...row, b[i]!]);
+  for (let col = 0; col < 3; col++) {
+    let piv = col;
+    for (let r = col + 1; r < 3; r++) if (Math.abs(m[r]![col]) > Math.abs(m[piv]![col])) piv = r;
+    if (Math.abs(m[piv]![col]) < 1e-12) return null;
+    [m[col], m[piv]] = [m[piv]!, m[col]!];
+    for (let r = 0; r < 3; r++) {
+      if (r === col) continue;
+      const f = m[r]![col] / m[col]![col];
+      for (let c = col; c < 4; c++) m[r]![c] -= f * m[col]![c]!;
+    }
+  }
+  return [m[0]![3] / m[0]![0], m[1]![3] / m[1]![1], m[2]![3] / m[2]![2]];
+}
+
+/** Fit log(mcap) = a + b*x + c*x^2 on log(TVL) by OLS; null when the fit is singular. */
+function fitQuadraticCurve(pool: SnapshotProtocol[]): [number, number, number] | null {
+  const pts = pool.filter((p) => p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0);
+  if (pts.length < 4) return null;
+  let s0 = 0;
+  let s1 = 0;
+  let s2 = 0;
+  let s3 = 0;
+  let s4 = 0;
+  let t0 = 0;
+  let t1 = 0;
+  let t2 = 0;
+  for (const p of pts) {
+    const x = Math.log(p.tvl_usd);
+    const y = Math.log(p.mcap_usd!);
+    const x2 = x * x;
+    s0 += 1;
+    s1 += x;
+    s2 += x2;
+    s3 += x2 * x;
+    s4 += x2 * x2;
+    t0 += y;
+    t1 += x * y;
+    t2 += x2 * y;
+  }
+  return solve3(
+    [
+      [s0, s1, s2],
+      [s1, s2, s3],
+      [s2, s3, s4],
+    ],
+    [t0, t1, t2],
+  );
+}
+
+/**
+ * The quadratic negative test: does a second size term (log TVL squared) predict
+ * trading tokens better than the straight line? Fit and scored by leave-one-out on
+ * the trading pool, reported as-is — a fancier curve that loses is a finding, not a
+ * failure to hide. `beats_linear` compares the quadratic's LOO median miss with the
+ * linear curve's, passed in from computeLOO so the two are scored on the same pool.
+ */
+export function computeQuadratic(pool: SnapshotProtocol[], linearMiss: number): QuadraticResults {
+  const preds: number[] = [];
+  const obss: number[] = [];
+  for (let i = 0; i < pool.length; i++) {
+    const q = pool[i]!;
+    const others = pool.filter((_, j) => j !== i);
+    const coef = fitQuadraticCurve(others);
+    if (coef === null) continue;
+    const x = Math.log(q.tvl_usd);
+    preds.push(Math.exp(coef[0] + coef[1] * x + coef[2] * x * x));
+    obss.push(q.mcap_usd!);
+  }
+  const s = missStats(preds, obss);
+  return { median_miss: s.median_miss, within_3x: s.within_3x, beats_linear: s.median_miss > 0 && s.median_miss < linearMiss };
+}
+
 /** The growth multiplier: momentum over seven days, capped so one week cannot dominate. */
 export function growthMultiplier(change7d: number | null): number {
   if (change7d === null) return 1.0;
@@ -550,6 +928,109 @@ function holdDaysFor(age: number | null): number {
   return 30;
 }
 
+// ---------------------------------------------------------------- farm economics (one canonical arithmetic)
+//
+// The farm plan's money math lives here, once, so the net step in farmSteps, the
+// confidence grade in computeGrade, and the dashboard's in-page recompute all use the
+// same numbers. The dashboard re-implements these functions from the row fields; the
+// verification note cross-checks the two against each other on sample rows.
+
+/** A farm plan's cost parts, from the protocol's own record. */
+export interface PlanCosts {
+  capital: number;
+  hold: number;
+  weeks: number;
+  bridgeCost: number;
+}
+
+/** The cost parts for one protocol and age. */
+export function planCosts(p: SnapshotProtocol, age: number | null): PlanCosts {
+  const capital = capitalFor(p);
+  const hold = holdDaysFor(age);
+  const weeks = Math.max(1, Math.round(hold / 7));
+  const bridgeCost = chainOf(p) === 'Ethereum' ? 0 : 5;
+  return { capital, hold, weeks, bridgeCost };
+}
+
+/** Total gas and fees at a deposit: only the gas tier moves with the deposit. */
+export function costAt(cap: number, costs: PlanCosts): number {
+  const g = cap >= 250 ? 8 : cap >= 100 ? 5 : 3;
+  return g + 2 * costs.weeks + 11 + costs.bridgeCost + 3;
+}
+
+/** Forgone yield on the deposit: a stated 4% annual benchmark over the hold. */
+export function forgoneYield(cap: number, hold: number): number {
+  return cap * FORGONE_YIELD_RATE * (hold / 365);
+}
+
+/** Net at a deposit: pro-rata reward (stated 10% farmer allocation) minus costs and forgone yield. */
+export function netAtDeposit(p: SnapshotProtocol, impliedValue: number, cap: number, costs: PlanCosts): number {
+  const reward = impliedValue * (cap / p.tvl_usd) * FARMER_ALLOCATION;
+  return reward - costAt(cap, costs) - forgoneYield(cap, costs.hold);
+}
+
+/** The smallest deposit that pays, scanned in $5 steps to $50,000; 0 when it never pays there. */
+export function breakEvenDeposit(p: SnapshotProtocol, impliedValue: number, costs: PlanCosts): number {
+  if (impliedValue <= 0) return 0;
+  for (let cap = 50; cap <= 50000; cap += 5) {
+    if (netAtDeposit(p, impliedValue, cap, costs) > 0) return cap;
+  }
+  return 0;
+}
+
+/**
+ * The day the plan pays, under linear accrual: the reward accrues evenly over the hold
+ * while costs accrue $2 a week plus the forgone yield daily. Day 1..365, or null when
+ * it never pays within a year at this deposit. The accrual is capped at the full
+ * reward once the hold is over.
+ */
+export function paysAfterDays(p: SnapshotProtocol, impliedValue: number, cap: number, costs: PlanCosts): number | null {
+  if (impliedValue <= 0) return null;
+  const reward = impliedValue * (cap / p.tvl_usd) * FARMER_ALLOCATION;
+  const setup = (cap >= 250 ? 8 : cap >= 100 ? 5 : 3) + 11 + costs.bridgeCost + 3;
+  for (let d = 1; d <= 365; d++) {
+    const accrued = Math.min(reward, (reward * d) / costs.hold);
+    const spent = setup + 2 * Math.ceil(d / 7) + cap * FORGONE_YIELD_RATE * (d / 365);
+    if (accrued >= spent) return d;
+  }
+  return null;
+}
+
+/**
+ * Confidence grade for one board row, from the row's own fields — never from its name.
+ * Score /100: 40 base + 15 watchlist + up to 10 age (10 at >= 1 year, 5 at 180-364
+ * days) + 10 positive seven-day growth + up to 10 size (10 at TVL >= $100M, 5 at
+ * $50-100M) + 15 when the low-end $10,000 net is positive (implied value divided by
+ * the curve's LOO median miss still pays at the plan's own cost math). A >= 80,
+ * B >= 60, else C. A trading anchor earns its 15 from the value being observed, not
+ * modelled — its market cap needs no band — so it can reach A on age, growth and size.
+ */
+export function computeGrade(
+  p: SnapshotProtocol,
+  status: 'pre-token' | 'trading' | 'trading-anomaly',
+  age: number | null,
+  value: number,
+  medianMiss: number,
+  watchlist: boolean,
+): { grade: 'A' | 'B' | 'C'; score: number } {
+  let score = 40;
+  if (watchlist) score += 15;
+  if (age !== null && age >= 365) score += 10;
+  else if (age !== null && age >= 180) score += 5;
+  if (p.change_7d !== null && p.change_7d > 0) score += 10;
+  if (p.tvl_usd >= 100_000_000) score += 10;
+  else if (p.tvl_usd >= 50_000_000) score += 5;
+  if (status !== 'trading') {
+    const costs = planCosts(p, age);
+    const miss = medianMiss > 0 ? medianMiss : 1;
+    if (netAtDeposit(p, value / miss, 10000, costs) > 0) score += 15;
+  } else {
+    score += 15; // Observed market cap: the value needs no model band.
+  }
+  const grade = score >= 80 ? 'A' : score >= 60 ? 'B' : 'C';
+  return { grade, score };
+}
+
 /** The category's family: which action a farmer takes there. */
 function familyOf(p: SnapshotProtocol): string {
   const c = (p.category ?? '').toLowerCase();
@@ -665,16 +1146,18 @@ export function stepText(step: FarmStep): string {
  * is Ethereum (there is nothing to bridge from); a second-feature step takes its place.
  * The last step nets the plan: the expected reward is pro-rata — the wallet's capital
  * as a share of the protocol's TVL, times a stated 10% farmer allocation of the implied
- * value — minus the plan's total gas and fees. The 10% is an assumption, stated in the
- * step itself, not a fact — and the capital is not a cost, it comes back on exit. At the
- * capital the plan uses ($50-$250) the pro-rata reward is usually smaller than the fees,
- * so the net is negative unless the airdrop is large. For a row whose value is a model
- * estimate (pre-token or anomaly), the net step also shows the net at $1,000 and $10,000
- * deposits, the smallest deposit that pays, the net at the low end of the value band
- * (implied value divided by the curve's median miss from leave-one-out), and a verdict:
- * Robust when the low-end net at $10,000 is positive, Thin when only the implied-value
- * net at $10,000 is, Skip otherwise. A trading anchor's value is observed, not modelled,
- * so its net step keeps the plain pro-rata net with no band or verdict.
+ * value — minus the plan's total gas and fees and the forgone yield on the deposit (a
+ * stated 4% annual benchmark over the hold). The 10% and the 4% are assumptions, stated
+ * in the step itself, not facts — and the capital is not a cost, it comes back on exit.
+ * At the capital the plan uses ($50-$250) the pro-rata reward is usually smaller than
+ * the fees, so the net is negative unless the airdrop is large. For a row whose value is
+ * a model estimate (pre-token or anomaly), the net step also shows the net at $1,000 and
+ * $10,000 deposits with the day each pays under linear accrual, the smallest deposit
+ * that pays (scanned to $50,000; 0 means it never pays there), the net at the low end of
+ * the value band (implied value divided by the curve's median miss from leave-one-out),
+ * and a verdict: Robust when the low-end net at $10,000 is positive, Thin when only the
+ * implied-value net at $10,000 is, Skip otherwise. A trading anchor's value is observed,
+ * not modelled, so its net step keeps the plain pro-rata net with no band or verdict.
  */
 export function farmSteps(
   p: SnapshotProtocol,
@@ -685,40 +1168,34 @@ export function farmSteps(
 ): FarmStep[] {
   const chain = chainOf(p);
   const name = p.name;
-  const capital = capitalFor(p);
-  const hold = holdDaysFor(age);
+  const costs = planCosts(p, age);
+  const capital = costs.capital;
+  const hold = costs.hold;
   const action = mainAction(p, capital, chain);
   const gas = capital >= 250 ? 8 : capital >= 100 ? 5 : 3;
-  const weeks = Math.max(1, Math.round(hold / 7));
-  const bridgeCost = chain === 'Ethereum' ? 0 : 5;
-  const totalCost = gas + 2 * weeks + 11 + bridgeCost + 3;
-  const reward = impliedValue * (capital / p.tvl_usd) * 0.10;
-  const net = reward - totalCost;
-  // Deposit sensitivity from the same cost math: the gas tier is the only part of the
-  // cost that moves with the deposit, so the net at any capital is the pro-rata reward
-  // at that capital minus the tier's cost. The break-even deposit is solved per tier.
+  const totalCost = costAt(capital, costs);
+  const reward = impliedValue * (capital / p.tvl_usd) * FARMER_ALLOCATION;
+  const fy = forgoneYield(capital, hold);
+  const net = reward - totalCost - fy;
+  // Deposit sensitivity from the same cost math, forgone yield included: the net at
+  // any deposit is the pro-rata reward at that deposit minus the tier's cost and the
+  // yield the deposit would have earned elsewhere. The break-even deposit is the first
+  // $5 step where that net turns positive; 0 means it never pays up to $50,000.
   const miss = medianMiss > 0 ? medianMiss : 1;
-  const netAt = (cap: number): number => {
-    const g2 = cap >= 250 ? 8 : cap >= 100 ? 5 : 3;
-    return impliedValue * (cap / p.tvl_usd) * 0.10 - (g2 + 2 * weeks + 11 + bridgeCost + 3);
-  };
-  const breakEven = (() => {
-    if (impliedValue <= 0) return 0;
-    const u = p.tvl_usd / (impliedValue * 0.10);
-    const t0 = 2 * weeks + bridgeCost + 17;
-    let x = t0 * u;
-    if (x >= 100) x = (t0 + 2) * u;
-    if (x >= 250) x = (t0 + 5) * u;
-    return Math.round(x);
-  })();
-  const low10k = (impliedValue / miss) * (10000 / p.tvl_usd) * 0.10 - (8 + 2 * weeks + 11 + bridgeCost + 3);
+  const netAt = (cap: number): number => netAtDeposit(p, impliedValue, cap, costs);
+  const breakEven = breakEvenDeposit(p, impliedValue, costs);
+  const low10k = netAtDeposit(p, impliedValue / miss, 10000, costs);
   const verdict = low10k > 0 ? 'Robust' : netAt(10000) > 0 ? 'Thin' : 'Skip';
+  const pays1k = paysAfterDays(p, impliedValue, 1000, costs);
+  const pays10k = paysAfterDays(p, impliedValue, 10000, costs);
   const money = (n: number): string =>
     n >= 1000 ? `$${Math.round(n).toLocaleString('en-US')}` : `$${Math.round(n * 100) / 100}`;
+  const signed = (n: number): string => `${n < 0 ? '−' : ''}${money(Math.abs(n))}`;
+  const paysText = (d: number | null): string => (d === null ? 'never within a year' : `after ${d} days`);
   const netText =
     status === 'trading'
-      ? `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}.${net < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${capital} capital returns on exit.`
-      : `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees, the net is ${net < 0 ? '−' : ''}${money(Math.abs(net))}.${net < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} At $1,000 the net is ${netAt(1000) < 0 ? '−' : ''}${money(Math.abs(netAt(1000)))}; at $10,000 it is ${netAt(10000) < 0 ? '−' : ''}${money(Math.abs(netAt(10000)))}.${breakEven <= capital ? ' The plan already pays at this size.' : ` The plan pays from ${money(breakEven)}.`} At the low end (implied / ${miss.toFixed(2)}, the median miss) the $10,000 net is ${low10k < 0 ? '−' : ''}${money(Math.abs(low10k))}. Verdict: ${verdict}. The 10% is assumed, not a fact; the $${capital} capital returns on exit.`;
+      ? `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees and ${money(fy)} forgone yield (4% over ${hold}d), the net is ${signed(net)}.${net < 0 ? ' At this size the plan loses money unless the airdrop is large.' : ''} The 10% is assumed, not a fact; the $${capital} capital returns on exit.`
+      : `Net: the $${capital} share of ${money(p.tvl_usd)} TVL, at a stated 10% farmer allocation of the ${money(impliedValue)} implied value, is ${money(reward)}; minus about $${totalCost} gas and fees and ${money(fy)} forgone yield (4% over ${hold}d), the net is ${signed(net)}. At $1,000 the net is ${signed(netAt(1000))} (pays ${paysText(pays1k)}); at $10,000 it is ${signed(netAt(10000))} (pays ${paysText(pays10k)}).${breakEven === 0 ? ' It never pays up to $50,000.' : breakEven <= capital ? ' The plan already pays at this size.' : ` The plan pays from ${money(breakEven)}.`} At the low end (implied / ${miss.toFixed(2)}, the median miss) the $10,000 net is ${signed(low10k)}. Verdict: ${verdict}. The 10% is assumed, not a fact; the $${capital} capital returns on exit.`;
   const steps: FarmStep[] = [
     {
       text: `Use a fresh wallet on ${chain} that holds only the funds you plan to farm in ${name}, and keep its seed phrase offline.`,
@@ -799,10 +1276,13 @@ function compareScored(
 }
 
 /**
- * The ranked board: every watchlist slug, plus the highest-valued other protocols outside
- * the six excluded categories. Values must be strictly decreasing down the ranks, so a
- * pass shaves $1 off any tie; a row that would fall to the floor is replaced by the next
- * reserve candidate. Returns the rows and the comps table for the dossier.
+ * The ranked board: every watchlist slug, plus 220 more — the 36 highest-valued trading
+ * anchors outside the six excluded categories, every pre-token protocol outside them,
+ * and every trading-anomaly protocol outside them. Values must be strictly decreasing
+ * down the ranks, so a pass shaves $1 off any tie; a row that would fall to the floor is
+ * replaced by the next reserve candidate (the trading protocols below the anchor cut).
+ * Returns the rows and the comps table for the dossier, plus the validation layers
+ * (stepwise, stability, Huber, quadratic) and the exclusion counts.
  */
 export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: RadarData } {
   const pool = tradingPool(snapshot.protocols);
@@ -810,6 +1290,16 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const fit = fitCurve(pool);
   const loo = computeLOO(pool);
   const walkforward = computeWalkForward(pool);
+  const stepwise = computeStepwise(pool, snapshot.as_of);
+  const huberFit = huberCurveFit(pool);
+  const huberRow = stepwise.rows[4]!;
+  const huber: HuberResults = {
+    a: round4(huberFit.a),
+    b: round4(huberFit.b),
+    median_miss: huberRow.median_miss,
+    within_3x: huberRow.within_3x,
+  };
+  const quadratic = computeQuadratic(pool, loo.curve.median_miss);
   const scored = new Map<string, ScoredValue>();
   for (const p of snapshot.protocols) scored.set(p.slug, scoreProtocol(p, pool, mGlobal, snapshot.floor_usd, snapshot.as_of, fit));
 
@@ -840,6 +1330,12 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       mCatSource: 'curve',
     });
   }
+  // The filler is partitioned, not just top-by-value: the 36 highest-valued trading
+  // anchors, every pre-token protocol outside the excluded categories, and every
+  // trading-anomaly protocol outside them. A plain top-220 by value would be dominated
+  // by trading anchors (their market caps dwarf every pre-token estimate) and the board
+  // would stop being a launch radar. The reserve for the tie-shave pass is the trading
+  // protocols below the anchor cut, in value order.
   const fillerPool = snapshot.protocols
     .filter(
       (p) =>
@@ -847,10 +1343,21 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
         !(p.category !== null && EXCLUDED_CATEGORIES.has(p.category)) &&
         scored.get(p.slug)!.value > 0,
     )
-    .map((p) => ({ p, value: scored.get(p.slug)!.value }))
+    .map((p) => ({ p, value: scored.get(p.slug)!.value }));
+  const anchors = fillerPool
+    .filter((s) => scored.get(s.p.slug)!.status === 'trading')
+    .sort(compareScored)
+    .slice(0, ANCHOR_ROWS);
+  const preFiller = fillerPool
+    .filter((s) => scored.get(s.p.slug)!.status === 'pre-token')
     .sort(compareScored);
-  const reserve = fillerPool.slice(FILLER_ROWS);
-  const chosen = [...watchlistRows.map((p) => ({ p, value: scored.get(p.slug)!.value })), ...fillerPool.slice(0, FILLER_ROWS)];
+  const anomFiller = fillerPool
+    .filter((s) => scored.get(s.p.slug)!.status === 'trading-anomaly')
+    .sort(compareScored);
+  const fillerChosen = [...anchors, ...preFiller, ...anomFiller].slice(0, FILLER_ROWS);
+  const chosenSet = new Set(fillerChosen.map((s) => s.p.slug));
+  const reserve = fillerPool.filter((s) => !chosenSet.has(s.p.slug)).sort(compareScored);
+  const chosen = [...watchlistRows.map((p) => ({ p, value: scored.get(p.slug)!.value })), ...fillerChosen];
   chosen.sort(compareScored);
 
   // Enforce strictly decreasing values by shaving $1 off a tie. The shave may go below
@@ -893,6 +1400,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
 
   const board: BoardRow[] = rows.map((s, i) => {
     const sc = scored.get(s.p.slug)!;
+    const g = computeGrade(s.p, sc.status, sc.age, s.value, loo.curve.median_miss, snapshot.watchlist.includes(s.p.slug));
     return {
       rank: i + 1,
       slug: s.p.slug,
@@ -909,6 +1417,10 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       watchlist: snapshot.watchlist.includes(s.p.slug),
       age_days: sc.age,
       implied_value_usd: s.value,
+      grade: g.grade,
+      grade_score: g.score,
+      rank_lo: 0,
+      rank_hi: 0,
       model: {
         m_cat: round4(sc.mCat),
         m_cat_source: sc.mCatSource,
@@ -921,6 +1433,63 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     };
   });
 
+  // Rank range under refits, attached to every board row (see computeRankRanges).
+  const rankRanges = computeRankRanges(snapshot, pool, fit, mGlobal, board);
+  for (const row of board) {
+    const [lo, hi] = rankRanges.get(row.slug)!;
+    row.rank_lo = lo;
+    row.rank_hi = hi;
+  }
+
+  // Top-20 stability: the full-fit top 20 pre-token slugs, then five refits.
+  const fullTop20 = [...scored.entries()]
+    .filter(([, sc]) => sc.status === 'pre-token')
+    .map(([slug, sc]) => ({ slug, value: sc.value }))
+    .sort((a, b) => b.value - a.value || (a.slug < b.slug ? -1 : 1))
+    .slice(0, 20)
+    .map((r) => r.slug);
+  const stability = computeStability(snapshot, pool, fullTop20);
+
+  // Every protocol left off the board, counted by reason. Priority: a protocol with
+  // no observable value cannot be priced at all; then the excluded category; then a
+  // trading protocol below the anchor cut. `not_selected` should stay 0 — it catches
+  // anything the partition above did not place, which would be a composition bug.
+  const boardSlugs = new Set(board.map((r) => r.slug));
+  const exCounts = { no_observable_value: 0, excluded_category: 0, trading_below_anchor_cut: 0, not_selected: 0 };
+  const exSlugs: Record<string, string[]> = {
+    'no observable value': [],
+    'excluded category': [],
+    'trading below the anchor cut': [],
+    'not selected': [],
+  };
+  for (const p of snapshot.protocols) {
+    if (boardSlugs.has(p.slug)) continue;
+    const sc = scored.get(p.slug)!;
+    let reason: 'no_observable_value' | 'excluded_category' | 'trading_below_anchor_cut' | 'not_selected';
+    let label: string;
+    if (sc.value <= 0) {
+      reason = 'no_observable_value';
+      label = 'no observable value';
+    } else if (p.category !== null && EXCLUDED_CATEGORIES.has(p.category)) {
+      reason = 'excluded_category';
+      label = 'excluded category';
+    } else if (sc.status === 'trading') {
+      reason = 'trading_below_anchor_cut';
+      label = 'trading below the anchor cut';
+    } else {
+      reason = 'not_selected';
+      label = 'not selected';
+    }
+    exCounts[reason]++;
+    if (exSlugs[label]!.length < 6) exSlugs[label]!.push(p.slug);
+  }
+  const excluded: ExclusionCounts = {
+    ...exCounts,
+    examples: Object.entries(exSlugs)
+      .filter(([, slugs]) => slugs.length > 0)
+      .map(([reason, slugs]) => ({ reason, slugs })),
+  };
+
   // The comps table, one row per category that appears on the board, for the dossier.
   const compsByCategory = new Map<string, CompsRow>();
   for (const row of board) {
@@ -929,7 +1498,9 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     const { multiple, source, comps } = compsMultiple(probe, pool, mGlobal);
     compsByCategory.set(row.category, { category: row.category, multiple: round4(multiple), comps, source });
   }
-  const comps = [...compsByCategory.values()].sort((a, b) => (a.category < b.category ? -1 : 1));
+  const comps = [...compsByCategory.values()]
+    .sort((a, b) => b.comps - a.comps || (a.category < b.category ? -1 : 1))
+    .slice(0, 10); // The chart shows the 10 categories with the most comps; the rest are in board.json's rows.
 
   const radar: RadarData = {
     as_of: snapshot.as_of,
@@ -942,6 +1513,11 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     curve_b: round4(fit.b),
     loo,
     walkforward,
+    stepwise,
+    stability,
+    huber,
+    quadratic,
+    excluded,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     rows: board.map((r) => [
@@ -951,16 +1527,18 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       r.category,
       r.chains.join(','),
       r.tvl_usd,
-      r.change_7d,
+      // Seven-day change rounded to 2 decimals: the column shows 1 decimal, the growth
+      // factor moves by at most 0.000025, and no value sits near the early-finds 20%
+      // threshold — verified against the snapshot, not assumed.
+      r.change_7d === null ? null : Math.round(r.change_7d * 100) / 100,
       r.age_days,
       r.implied_value_usd,
       r.token_status === 'pre-token' ? 'p' : r.token_status === 'trading' ? 't' : 'a',
       r.watchlist ? 1 : 0,
-      r.model.m_cat,
-      r.model.growth_multiplier,
-      r.model.age_multiplier,
-      r.model.chain_multiplier,
-      r.model.launch_probability,
+      r.grade,
+      r.grade_score,
+      r.rank - r.rank_lo,
+      r.rank_hi - r.rank,
     ] as RadarRow),
     comps,
   };
